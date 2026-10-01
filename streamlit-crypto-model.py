@@ -13,6 +13,7 @@ import random
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.callbacks import EarlyStopping
 
 SEED = 7
 random.seed(SEED)
@@ -195,7 +196,11 @@ else:
                     Dense(1)
                 ])
                 model.compile(optimizer='adam', loss='mse')
-                train_history = model.fit(Xtr, ytr, epochs=epochs_n, batch_size=32, verbose=0)
+                # Early stopping sobre validación: el slider es el MÁXIMO de épocas,
+                # el entrenamiento se detiene solo cuando la validación deja de mejorar.
+                stop = EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True)
+                train_history = model.fit(Xtr, ytr, epochs=epochs_n, batch_size=32, verbose=0,
+                                          validation_split=0.1, callbacks=[stop])
                 st.session_state['train_loss_history'] = train_history.history['loss']
 
                 # Validación honesta en test: LSTM vs naive (mañana = hoy).
