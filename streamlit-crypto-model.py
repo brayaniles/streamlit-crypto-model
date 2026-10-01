@@ -1,18 +1,5 @@
-# --- 1. INSTALACIÓN AUTOMÁTICA DE DEPENDENCIAS ---
-import subprocess
-import sys
-
-def check_dependencies():
-    packages = ["streamlit", "yfinance", "pandas", "numpy", "plotly", "scikit-learn", "tensorflow-cpu", "feedparser"]
-    for package in packages:
-        try:
-            __import__(package.replace("-cpu", ""))
-        except ImportError:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-
-check_dependencies()
-
-# Now import all libraries after ensuring they are installed
+# --- 1. DEPENDENCIAS ---
+# Se instalan via requirements.txt (no auto-install: frágil en Streamlit Cloud).
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -22,8 +9,15 @@ from sklearn.preprocessing import MinMaxScaler
 import feedparser
 from datetime import datetime
 
+import random
+import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
+
+SEED = 7
+random.seed(SEED)
+np.random.seed(SEED)
+tf.random.set_seed(SEED)
 
 # --- 2. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="AI Crypto Strategist & Sentinel 2026", layout="wide")
@@ -176,14 +170,23 @@ else:
     with tab2:
         if st.button("🔥 Iniciar Entrenamiento e IA 7 Días"):
             with st.spinner("La IA está analizando los patrones de velas..."):
+                # Split temporal 80/20: el scaler SOLO ve train (sin fuga de futuro).
+                closes = df[['Close']].values
+                n = len(closes)
+                cut = int(n * 0.8)
                 scaler = MinMaxScaler()
-                scaled_data = scaler.fit_transform(df[['Close']].values)
+                scaler.fit(closes[:cut])
+                scaled_data = scaler.transform(closes)
                 X, y = [], []
                 for i in range(60, len(scaled_data)):
                     X.append(scaled_data[i-60:i, 0])
                     y.append(scaled_data[i, 0])
                 X, y = np.array(X), np.array(y)
                 X = np.reshape(X, (X.shape[0], X.shape[1], 1))
+                # Índices de test en el espacio de ventanas (ventana i predice el cierre i)
+                n_test = n - cut
+                Xtr, ytr = X[:cut - 60], y[:cut - 60]
+                Xte, yte = X[cut - 60:], y[cut - 60:]
 
                 model = Sequential([
                     LSTM(50, return_sequences=True, input_shape=(60, 1)),
@@ -192,8 +195,26 @@ else:
                     Dense(1)
                 ])
                 model.compile(optimizer='adam', loss='mse')
-                train_history = model.fit(X, y, epochs=epochs_n, batch_size=32, verbose=0)
+                train_history = model.fit(Xtr, ytr, epochs=epochs_n, batch_size=32, verbose=0)
                 st.session_state['train_loss_history'] = train_history.history['loss']
+
+                # Validación honesta en test: LSTM vs naive (mañana = hoy).
+                pred_te = model.predict(Xte, verbose=0)
+                real_te = scaler.inverse_transform(yte.reshape(-1, 1)).flatten()
+                pred_te_px = scaler.inverse_transform(pred_te.reshape(-1, 1)).flatten()
+                naive_te = closes[cut - 1:-1, 0]
+                mae_m = float(np.abs(real_te - pred_te_px).mean())
+                mae_n = float(np.abs(real_te - naive_te).mean())
+                dir_m = float((((real_te[1:] - real_te[:-1]) > 0) == ((pred_te_px[1:] - real_te[:-1]) > 0)).mean())
+                st.subheader("📏 Validación fuera de muestra (último 20%)")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("MAE LSTM", f"${mae_m:,.0f}")
+                c2.metric("MAE naive (mañana=hoy)", f"${mae_n:,.0f}")
+                c3.metric("Dirección LSTM", f"{dir_m:.0%}")
+                if mae_m > mae_n:
+                    st.warning("⚠️ El LSTM no supera al baseline naive en este periodo. Interpreta la proyección con cautela.")
+                else:
+                    st.success("✅ El LSTM supera al baseline naive en este periodo.")
 
                 future_preds = []
                 current_batch = scaled_data[-60:].reshape(1, 60, 1)
@@ -227,12 +248,13 @@ else:
                          "Rendimiento Neto": ["-14.79% (Falsas señales)", "+13.19% (Selectivo)", "+10.16% (Inmunidad Defensiva)"],
                          "Robustez Evaluada": ["⚠️ FRÁGIL / SOBRE-OPERADO", "✅ ALTA ROBUSTEZ ESTRUCTURAL", "🛡️ ULTRA-ROBUSTO (Supervivencia)"]}
         st.table(pd.DataFrame(data_robustez))
+        st.caption("⚠️ Tabla ilustrativa pendiente de cálculo automático. Usa `python validate.py` para métricas walk-forward reales.")
         st.info("💡 Conclusión del sistema: Los datos prueban que la ventaja matemática de Sentinel V4 radica en su excelente Ratio de Payoff. No requiere ganar muchas operaciones (Win Rate bajo) ya que, cuando captura una tendencia real en momentos de crisis, compensa con creces las pérdidas controladas.")
 
     # --- PESTAÑA 4: NOTICIAS ---
     with tab4:
         st.subheader(f"📰 Noticias del Mercado en Tiempo Real: {crypto}")
-        rss_url = f"https://yahoo.com{crypto}&region=US〈=en-US"
+        rss_url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={crypto}&region=US&lang=en-US"
         feed = feedparser.parse(rss_url)
         if feed.entries:
             for entry in feed.entries[:5]:
