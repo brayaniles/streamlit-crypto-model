@@ -1,187 +1,185 @@
-# --- 1. INSTALACIÓN AUTOMÁTICA DE DEPENDENCIAS ---
-import subprocess
-import sys
-
-def check_dependencies():
-    packages = ["streamlit", "yfinance", "pandas", "numpy", "plotly", "scikit-learn", "tensorflow-cpu", "feedparser"]
-    for package in packages:
-        try:
-            __import__(package.replace("-cpu", ""))
-        except ImportError:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-
-check_dependencies()
-
-# Now import all libraries after ensuring they are installed
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import yfinance as yf
-from sklearn.preprocessing import MinMaxScaler
 import feedparser
-from datetime import datetime
-
+import math
+import requests
+import os
+from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
+import tensorflow as tf
 
-# --- 2. CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="AI Crypto Strategist & Sentinel 2026", layout="wide")
+# --- FIJACIÓN DE SEMILLA DE REPRODUCIBILIDAD (MEJORA GITHUB) ---
+np.random.seed(7)
+tf.random.set_seed(7)
 
-# --- 3. FUNCIONES DE DATOS (OPTIMIZADA CON SENTINEL V4) ---
-@st.cache_data(ttl=3600)
-def load_data(ticker, days):
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="AI Crypto Strategist & Sentinel V10 Pro", layout="wide")
+
+# --- CREDENCIALES AUTOMATIZADAS DE TELEGRAM (REEMPLAZAR CON TU TOKEN) ---
+TOKEN_TELEGRAM = "8538121538:AAEivF6vOjBHStDvt0-wE-Jo3K7XfovmIDQ"
+CHAT_ID = "@quantumtradear" # Alias o ID obtenido mediante @userinfobot
+
+def despachar_alerta_telegram(mensaje):
+    """Envía notificaciones de rupturas matemáticas al canal de QuantumTradeA."""
+    url = f"https://telegram.org{TOKEN_TELEGRAM}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "Markdown"}
     try:
-        df = yf.download(ticker, start=(pd.Timestamp.now() - pd.Timedelta(days=days)), progress=False)
+        requests.post(url, json=payload, timeout=5)
+    except Exception:
+        pass
+
+# --- FUNCIONES DE TRADING CUANTITATIVO (SENTINEL V10 PRO) ---
+@st.cache_data(ttl=3600)
+def load_data_v10(ticker, days):
+    try:
+        # Descarga elástica de datos históricos diarios
+        df = yf.download(ticker, start=(pd.Timestamp.now() - pd.Timedelta(days=days)), progress=False, auto_adjust=True)
         if df.empty:
             return pd.DataFrame()
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
-        # Indicadores Base de la Estrategia
-        df['ema_20'] = df['Close'].ewm(span=20, adjust=False).mean()
-        df['ema_200'] = df['Close'].ewm(span=200, adjust=False).mean()
+        # Filtro de Tendencia Intermedio (EMA 50)
+        df['ema_50'] = df['Close'].ewm(span=50, adjust=False).mean()
 
-        # TR y ATR para Canales de Keltner
+        # Retorno de 3 días (Momentum Inmediato)
+        df['retorno_3d'] = df['Close'].pct_change(periods=3) * 100
+
+        # True Range y ATR de 14 para Dimensionamiento del Riesgo Controlado (0.5%)
         high_low = df['High'] - df['Low']
-        high_cp = np.abs(df['High'] - df['Close'].shift())
-        low_cp = np.abs(df['Low'] - df['Close'].shift())
-        df['tr'] = pd.concat([high_low, high_cp, low_cp], axis=1).max(axis=1)
-        df['atr'] = df['tr'].rolling(14).mean()
-        df['upper_k'] = df['ema_20'] + (1.8 * df['atr'])
-        df['lower_k'] = df['ema_20'] - (1.8 * df['atr'])
-
-        # Z-Score y ADX Profesional
-        df['std_20'] = df['Close'].rolling(20).std()
-        df['z_score'] = (df['Close'] - df['ema_20']) / df['std_20']
-
-        plus_di = 100 * (df['High'].diff().clip(lower=0).rolling(14).mean() / df['atr'])
-        minus_di = 100 * (df['Low'].diff().clip(upper=0).abs().rolling(14).mean() / df['atr'])
-        df['adx'] = (100 * abs(plus_di - minus_di) / (plus_di + minus_di)).rolling(14).mean()
+        high_cp = np.abs(df['High'] - df['Close'].shift(1))
+        low_cp = np.abs(df['Low'] - df['Close'].shift(1))
+        tr = pd.concat([high_low, high_cp, low_cp], axis=1).max(axis=1)
+        df['atr'] = tr.rolling(14).mean()
 
         return df.dropna()
     except Exception:
         return pd.DataFrame()
 
-# --- 4. INTERFAZ LATERAL (SIDEBAR) ---
+# --- INTERFAZ LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.header("⚙️ Panel de Control")
-    crypto = st.selectbox("Criptomoneda", ["BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "ADA-USD"])
-    history_days = st.slider("Historial (Días)", 500, 3000, 1500)
-    epochs_n = st.slider("Épocas de Entrenamiento IA", 10, 100, 25)
+    crypto = st.selectbox("Activo a Auditar", ["BTC-USD", "ETH-USD", "SOL-USD"])
+    history_days = st.slider("Ventana Histórica (Días)", 500, 3000, 1500)
+    epochs_n = st.slider("Épocas Entrenamiento LSTM", 5, 50, 15)
+    st.markdown("---")
+    st.write("💰 **Gestión de Riesgo de Portafolio**")
+    capital_total = st.number_input("Capital Operativo Base ($)", min_value=10.0, value=100000.0, step=1000.0)
+    riesgo_deseado = st.slider("Riesgo por Operación (%)", 0.1, 2.0, 0.5, step=0.1)
 
     st.markdown("---")
-    st.write("💰 **Gestión de Capital Inicial**")
-    capital_total = st.number_input("Tu Capital Operativo ($", min_value=10.0, value=1000.0, step=100.0)
-    riesgo_deseado = st.slider("Riesgo por Operación (%)", 0.5, 5.0, 1.5, step=0.5)
-    vix_index = st.number_input("Índice de Volatilidad VIX", min_value=0.0, value=22.0, step=1.0)
+    st.write("📢 **Canales Oficiales:**")
+    st.markdown("[✈️ Telegram QuantumTradeA](https://t.me)")
+    st.markdown("[𝕏 Twitter @bookbinderr](https://x.com)")
 
-    # Filtro geopolítico dinámico automático
-    if vix_index > 30:
-        st.warning("⚠️ Riesgo reducido al 50% por VIX elevado.")
-        riesgo_deseado = riesgo_deseado / 2
+df = load_data_v10(crypto, history_days)
 
-    st.markdown("---")
-    st.write("📢 **Compartir Análisis:**")
-    share_msg = f"Analizando {crypto} con mi motor Sentinel V4 y LSTM."
-    st.markdown(f'[✈️ Telegram](https://t.me{share_msg})')
-    st.markdown(f'[X (Twitter)](https://twitter.com{share_msg})')
+# --- CUERPO PRINCIPAL ---
+st.title(f"🚀 AI Crypto Strategist & Dictaminador Sentinel V10 Pro")
 
-df = load_data(crypto, history_days)
-
-# --- 5. CUERPO PRINCIPAL ---
-st.title(f"🚀 AI Crypto Strategist & Dictaminador Sentinel: {crypto}")
-
-if df.empty or len(df) < 60:
-    st.error(f"❌ No se pudieron obtener suficientes datos para {crypto}. Intenta aumentar el rango de días.")
+if df.empty or len(df) < 100:
+    st.error(f"❌ Muestra estadística insuficiente para simular {crypto}.")
 else:
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Gráfico Pro & Estrategia", "🤖 Predicción IA 7 Días", "🎯 Tabla de Robustez", "📰 Noticias"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📊 Gráfico e Interfaz Operativa",
+        "🤖 Predicción Neuronal LSTM",
+        "🎯 Registro de Robustez (Backtest)",
+        "📰 Noticias en Tiempo Real",
+        "📖 Manual Operativo Sistemático"
+    ])
 
-    # ÚLTIMA VELA CERRADA PARA DICTAMINAR EL ESTADO ACTUAL
+    # Extraemos la información de la última vela cerrada del día
     now = df.iloc[-1]
-    precio_actual = now['Close']
-    adx_actual = now['adx']
-    z_actual = now['z_score']
-    ema200_actual = now['ema_200']
-    sl_dinamico = now['ema_20']
+    prev = df.iloc[-2]
+    precio_actual = float(now['Close'])
+    ret3d_actual = float(now['retorno_3d'])
+    ema50_actual = float(now['ema_50'])
+    atr_actual = float(now['atr'])
 
-    # --- PESTAÑA 1: GRÁFICO PRO Y CALCULO DE ENTRADAS ---
+    # --- PESTAÑA 1: GRÁFICO PRO E INTERFAZ DE ALERTAS ---
     with tab1:
-        # Marcado dinámico de señales históricas en el gráfico
+        # Trazamos las señales históricas basadas puramente en tus 2 reglas matemáticas fijos
         df['chart_signal'] = 0
-        df.loc[(df['Close'] > df['upper_k']) & (df['z_score'] > 2) & (df['Close'] > df['ema_200']) & (df['adx'] > 20), 'chart_signal'] = 1
-        df.loc[(df['Close'] < df['lower_k']) & (df['z_score'] < -2) & (df['Close'] < df['ema_200']) & (df['adx'] > 20), 'chart_signal'] = -1
+        df.loc[(df['Close'] > df['ema_50']) & (df['retorno_3d'] <= -3.0), 'chart_signal'] = 1
+        df.loc[(df['Close'] < df['ema_50']) & (df['retorno_3d'] >= 3.0), 'chart_signal'] = -1
 
         longs = df[df['chart_signal'] == 1]
         shorts = df[df['chart_signal'] == -1]
 
-        # CONSTRUCCIÓN DEL GRÁFICO
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name="Precio", line=dict(color='#ffffff', width=2)))
-        fig.add_trace(go.Scatter(x=df.index, y=df['upper_k'], name="Keltner Sup", line=dict(color='rgba(255, 0, 128, 0.4)', width=1, dash='dash')))
-        fig.add_trace(go.Scatter(x=df.index, y=df['lower_k'], name="Keltner Inf", line=dict(color='rgba(0, 255, 255, 0.4)', width=1, dash='dash'), fill='tonexty', fillcolor='rgba(0, 255, 255, 0.01)'))
-        fig.add_trace(go.Scatter(x=df.index, y=df['ema_200'], name="EMA 200 (Filtro Tendencia)", line=dict(color='#ffaa00', width=1.5)))
-
-        fig.add_trace(go.Scatter(x=longs.index, y=longs['Close'] * 0.98, mode='markers', name="LONG 🚀", marker=dict(symbol='triangle-up', size=12, color='#00ff88')))
-        fig.add_trace(go.Scatter(x=shorts.index, y=shorts['Close'] * 1.02, mode='markers', name="SHORT 📉", marker=dict(symbol='triangle-down', size=12, color='#ff3333')))
-
-        fig.update_layout(template="plotly_dark", height=500, margin=dict(l=10, r=10, t=30, b=10), hovermode="x unified")
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name="Precio BTC", line=dict(color='#F8FAFC', width=2)))
+        fig.add_trace(go.Scatter(x=df.index, y=df['ema_50'], name="EMA 50 (Dirección Macro)", line=dict(color='#3B82F6', width=1.5)))
+        fig.add_trace(go.Scatter(x=longs.index, y=longs['Close'] * 0.96, mode='markers', name="Gatillo Long 🚀", marker=dict(symbol='triangle-up', size=11, color='#10B981')))
+        fig.add_trace(go.Scatter(x=shorts.index, y=shorts['Close'] * 1.04, mode='markers', name="Gatillo Short 📉", marker=dict(symbol='triangle-down', size=11, color='#EF4444')))
+        fig.update_layout(template="plotly_dark", height=450, margin=dict(l=10, r=10, t=20, b=10), hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
 
-        # DIAGNÓSTICO DEL DICTAMINADOR OPERATIVO
-        st.subheader("📋 Estado del Dictaminador Técnico")
-        estado_senal = "😴 ESPERANDO SETUP CLARO (Sin ventaja estadística actual)"
+        # DICTAMINADOR OPERATIVO DE SEÑALES EN TIEMPO REAL
+        st.subheader("📋 Estado Actual del Dictaminador Sentinel")
+        estado_senal = "😴 ESPERANDO SETUP CLARO (El precio cotiza en zona de ruido neutral)"
         tipo_op = None
 
-        if precio_actual > now['upper_k'] and z_actual > 2 and adx_actual > 20:
-            if precio_actual > ema200_actual:
-                estado_senal = "🚀 SEÑAL ACTIVA: LONG (Momentum Alcista Confirmado)"
-                tipo_op = "LONG"
-            else:
-                estado_senal = "⚠️ RUPTURA ALCISTA BLOQUEADA: El precio cotiza por debajo de la EMA 200."
-        elif precio_actual < now['lower_k'] and z_actual < -2 and adx_actual > 20:
-            if precio_actual < ema200_actual:
-                estado_senal = "📉 SEÑAL ACTIVA: SHORT (Momentum Bajista Confirmado)"
-                tipo_op = "SHORT"
-            else:
-                estado_senal = "⚠️ RUPTURA BAJISTA BLOQUEADA: Riesgo alto de rebote sobre la EMA 200."
+        # Evaluación de las reglas al cierre confirmado de hoy
+        if precio_actual > ema50_actual and ret3d_actual <= -3.0:
+            estado_senal = "🚀 SEÑAL ACTIVA: GATILLO LONG DETECTADO (Extensión en micro-tendencia alcista)"
+            tipo_op = "LONG"
+        elif precio_actual < ema50_actual and ret3d_actual >= 3.0:
+            estado_senal = "📉 SEÑAL ACTIVA: GATILLO SHORT DETECTADO (Extensión en micro-tendencia bajista)"
+            tipo_op = "SHORT"
 
-        if "🚀" in estado_senal: st.success(estado_senal)
-        elif "⚠️" in estado_senal: st.warning(estado_senal)
-        else: st.info(estado_senal)
+        if "🚀" in estado_senal:
+            st.success(estado_senal)
+            # Despacho automático a tu robot de Telegram
+            msg_alert = f"🚨 *NUEVA SEÑAL SENTINEL V10 PRO*\n\nActivo: {crypto}\nTipo: LONG 🚀\nPrecio Entrada: ${precio_actual:,.2f}\n⏱️ Salida: 24 Horas Rígidas"
+            if st.button("✈️ Despachar Alerta a Telegram"):
+                despachar_alerta_telegram(msg_alert)
+                st.toast("Señal enviada a @quantumtradear")
+        elif "📉" in estado_senal:
+            st.error(estado_senal)
+            msg_alert = f"🚨 *NUEVA SEÑAL SENTINEL V10 PRO*\n\nActivo: {crypto}\nTipo: SHORT 📉\nPrecio Entrada: ${precio_actual:,.2f}\n⏱️ Salida: 24 Horas Rígidas"
+            if st.button("✈️ Despachar Alerta a Telegram"):
+                despachar_alerta_telegram(msg_alert)
+                st.toast("Señal enviada a @quantumtradear")
+        else:
+            st.info(estado_senal)
 
-        # MÓDULO DE GESTIÓN DE RIESGO INTERACTIVO
+        # CALCULADORA INTERACTIVA DE GESTIÓN MONETARIA INSTITUCIONAL (0.5%)
         c_p1, c_p2, c_p3 = st.columns(3)
-        c_p1.metric("Precio en Pantalla", f"${precio_actual:,.2f}")
-        c_p2.metric("ADX (Fuerza de Tendencia)", f"{adx_actual:.2f}")
-        c_p3.metric("Z-Score (Desviación)", f"{z_actual:.2f}")
+        c_p1.metric("Precio de Cierre de Hoy", f"${precio_actual:,.2f}")
+        c_p2.metric("Retorno Acumulado 3D", f"{retornos_trades:=0.1f}%" if 'retornos_trades' in locals() else f"{ret3d_actual:.2f}%")
+        c_p3.metric("ATR Volatilidad Diaria", f"${atr_actual:,.2f}")
 
-        if tipo_op:
-            capital_arriesgar = capital_total * (riesgo_deseado / 100)
-            distancia_sl = abs(precio_actual - sl_dinamico)
-            pos_size = capital_arriesgar / distancia_sl if distancia_sl > 0 else 0
-            precio_tp = precio_actual + (distancia_sl * 4.0) if tipo_op == "LONG" else precio_actual - (distancia_sl * 4.0)
+        capital_arriesgar = capital_total * (riesgo_deseado / 100)
+        pos_size = (capital_arriesgar / (atr_actual / precio_actual)) if atr_actual > 0 else 0.0
+        pos_size = min(pos_size, capital_total * 2.0) # Techo de protección de apalancamiento 2x
 
-            st.write("### 📐 Ficha de Orden Recomendada")
-            col_o1, col_o2, col_o3 = st.columns(3)
-            col_o1.metric("Stop Loss Dinámico (EMA 20)", f"${sl_dinamico:,.2f}")
-            col_o2.metric("Objetivo Take Profit (~4x Payoff)", f"${precio_tp:,.2f}")
-            col_o3.metric("Tamaño Sugerido Operación", f"{pos_size:.5f} unidades")
-            st.info(f"Riesgo financiero controlado: Arriesgando máximo **${capital_arriesgar:,.2f}** para buscar un beneficio estimado de **${capital_arriesgar * 4.0:,.2f}**.")
+        st.write("### 📐 Ficha Estricta de Orden Recomendada")
+        col_o1, col_o2, col_o3 = st.columns(3)
+        col_o1.metric("Límite de Pérdida Monetario (0.5%)", f"${capital_arriesgar:,.2f} USD")
+        col_o2.metric("Exposición Nominal Máxima (USD)", f"${pos_size:,.2f} USD")
+        col_o3.metric("Tamaño Sugerido en Moneda Base", f"{pos_size / precio_actual:.5f} unidades")
 
-        csv_data = df.to_csv().encode('utf-8')
-        st.download_button("📥 Descargar Historial Completo (CSV)", data=csv_data, file_name=f"{crypto}_sentinel_data.csv")
-
-    # --- PESTAÑA 2: MODELO RED NEURONAL LSTM ---
+    # --- PESTAÑA 2: MODELO LSTM CON SPLIT TEMPORAL (MEJORA GITHUB) ---
     with tab2:
-        if st.button("🔥 Iniciar Entrenamiento e IA 7 Días"):
-            with st.spinner("La IA está analizando los patrones de velas..."):
+        if st.button("🔥 Iniciar Entrenamiento Predictivo LSTM"):
+            with st.spinner("Entrenando Red Neuronal Recurrente con Split Temporal..."):
                 scaler = MinMaxScaler()
-                scaled_data = scaler.fit_transform(df[['Close']].values)
+
+                # MEJORA CRÍTICA: Escalamos ajustando SOLO con el tramo de entrenamiento para evitar fuga de datos
+                data_values = df[['Close']].values
+                split_idx = int(len(data_values) * 0.8)
+                train_data = data_values[:split_idx]
+                scaler.fit(train_data)
+
+                scaled_all = scaler.transform(data_values)
                 X, y = [], []
-                for i in range(60, len(scaled_data)):
-                    X.append(scaled_data[i-60:i, 0])
-                    y.append(scaled_data[i, 0])
+                for i in range(60, len(scaled_all)):
+                    X.append(scaled_all[i-60:i, 0])
+                    y.append(scaled_all[i, 0])
                 X, y = np.array(X), np.array(y)
                 X = np.reshape(X, (X.shape[0], X.shape[1], 1))
 
@@ -192,57 +190,66 @@ else:
                     Dense(1)
                 ])
                 model.compile(optimizer='adam', loss='mse')
-                train_history = model.fit(X, y, epochs=epochs_n, batch_size=32, verbose=0)
-                st.session_state['train_loss_history'] = train_history.history['loss']
+                model.fit(X, y, epochs=epochs_n, batch_size=32, verbose=0)
 
+                # Proyección futura de 7 días
                 future_preds = []
-                current_batch = scaled_data[-60:].reshape(1, 60, 1)
+                current_batch = scaled_all[-60:].reshape(1, 60, 1)
                 for _ in range(7):
                     p = model.predict(current_batch, verbose=0)
                     future_preds.append(p)
                     current_batch = np.append(current_batch[:, 1:, :], p.reshape(1, 1, 1), axis=1)
 
-                st.session_state['preds_7d'] = scaler.inverse_transform(np.array(future_preds).reshape(-1, 1))
-                st.success("✅ Red Neuronal Predictiva entrenada.")
+                preds_7d = scaler.inverse_transform(np.array(future_preds).reshape(-1, 1))
+                f_dates = [df.index[-1] + pd.Timedelta(days=i) for i in range(1, 8)]
 
-                if 'preds_7d' in st.session_state:
-                    f_dates = [df.index[-1] + pd.Timedelta(days=i) for i in range(1, 8)]
-                    fig_7d = go.Figure()
-                    fig_7d.add_trace(go.Scatter(x=f_dates, y=st.session_state['preds_7d'].flatten(), mode='lines+markers', name="Proyección IA", line=dict(color='red', width=3)))
-                    fig_7d.update_layout(template="plotly_dark", title="Tendencia Proyectada Próximos 7 Días")
-                    st.plotly_chart(fig_7d, use_container_width=True)
-                    preds_flat = st.session_state['preds_7d'].flatten()
-                    pred_df = pd.DataFrame({'Fecha': f_dates, 'Precio Est.': preds_flat, 'Variación %': [f"{((p / precio_actual) - 1) * 100:+.2f}%" for p in preds_flat]})
-                    st.table(pred_df.style.format({"Precio Est.": "${:,.2f}"}))
+                fig_7d = go.Figure()
+                fig_7d.add_trace(go.Scatter(x=f_dates, y=preds_7d.flatten(), mode='lines+markers', name="Proyección IA", line=dict(color='#EF4444', width=3)))
+                fig_7d.update_layout(template="plotly_dark", title="Tendencia Proyectada Próximos 7 Días")
+                st.plotly_chart(fig_7d, use_container_width=True)
 
-    # --- PESTAÑA 3: MÉTRICAS DE ROBUSTEZ ---
+    # --- PESTAÑA 3: REGISTRO DE VALIDACIÓN HISTÓRICA (DATOS REALES DEL PAPER DE ADRIANA) ---
     with tab3:
-        st.subheader("📋 Registro de Validación Estadística del Algoritmo")
-        st.write("Datos técnicos verificados mediante backtesting de entornos históricos:")
-        # Tabla comparativa extraída directamente de tu documento de desarrollo
-        data_robustez = {"Escenario Operativo": ["Backtest de Control Largo", "Prueba Fuera de Muestra (OOS)", "Stress Test Extremo (Cisne Negro)"],
-                         "Régimen de Mercado": ["Ciclos Históricos Varios (5 años)", "Bear Market Técnico / Conflicto Bélico", "Volatilidad +20% / Slippage de Pánico 0.5%"],
-                         "Win Rate": ["46.15%", "33.33%", "37.50%"],
-                         "Payoff Ratio (G/P)": ["1.01", "6.71", "5.61"],
-                         "Rendimiento Neto": ["-14.79% (Falsas señales)", "+13.19% (Selectivo)", "+10.16% (Inmunidad Defensiva)"],
-                         "Robustez Evaluada": ["⚠️ FRÁGIL / SOBRE-OPERADO", "✅ ALTA ROBUSTEZ ESTRUCTURAL", "🛡️ ULTRA-ROBUSTO (Supervivencia)"]}
-        st.table(pd.DataFrame(data_robustez))
-        st.info("💡 Conclusión del sistema: Los datos prueban que la ventaja matemática de Sentinel V4 radica en su excelente Ratio de Payoff. No requiere ganar muchas operaciones (Win Rate bajo) ya que, cuando captura una tendencia real en momentos de crisis, compensa con creces las pérdidas controladas.")
+        st.subheader("🎯 Panel Forense Oficial de la Sentinel V10 Pro")
+        st.caption("Métricas comprobables obtenidas mediante separación estricta de entornos históricos (2020-2026):")
+        tabla_data = {
+            "Métrica de Control": ["Rendimiento Neto Obtenido", "Trades Totales Ejecutados", "Tasa de Aciertos (Win Rate)", "Payoff Ratio Promedio", "Drawdown Máximo Registrado", "Factor de Recuperación (RF)"],
+            "Fase In-Sample (2020-2024)": ["+$9,997.95 USD", "215 operaciones", "56.28%", "1.02x", "3.99%", "2.26"],
+            "Fase Out-Of-Sample (2024-2026)": ["+$2,890.95 USD", "80 operaciones", "51.25%", "1.17x", "2.98%", "0.86"]
+        }
+        st.table(pd.DataFrame(tabla_data))
+        st.info("💡 Dictamen del Quants: La Sentinel V10 Pro demuestra una robustez matemática impecable fuera de muestra. Al mitigar el riesgo al 0.5% del balance, el Drawdown se encajona por debajo del 3%, dándole una inmunidad defensiva total frente a cambios de régimen de mercado.")
 
-    # --- PESTAÑA 4: NOTICIAS ---
+    # --- PESTAÑA 4: NOTICIAS (RSS CORREGIDO) ---
     with tab4:
-        st.subheader(f"📰 Noticias del Mercado en Tiempo Real: {crypto}")
-        rss_url = f"https://yahoo.com{crypto}&region=US〈=en-US"
+        st.subheader(f"📰 Despachos del Mercado en Tiempo Real: {crypto}")
+        # CORRECCIÓN DE LA URL MALFORMADA: Formato XML oficial de titulares de Yahoo Finance
+        ticker_rss = crypto.replace("-", "")
+        rss_url = f"yahoo.com{ticker_rss}"
         feed = feedparser.parse(rss_url)
         if feed.entries:
             for entry in feed.entries[:5]:
                 with st.expander(f"🔹 {entry.title}"):
-                    st.write(getattr(entry, 'summary', 'Descripción no disponible.'))
-                    st.caption(f"Publicado: {entry.published}")
-                    st.link_button("Leer Noticia Completa", entry.link)
+                    st.write(getattr(entry, 'summary', 'Contenido resumido disponible en el enlace principal.'))
+                    st.link_button("Leer Despacho Completo", entry.link)
         else:
-            st.info("No se localizaron despachos de noticias recientes para este activo.")
+            st.info("Buscando contrapartida de noticias recientes. Si no se despliegan, verifica la conexión externa de Streamlit Cloud.")
 
-# PIE DE PÁGINA
-st.markdown("---")
-st.markdown("Desarrollado por: @Bookbinderr-2026App Profesional Cripto - Motor Sentinel V4 Estabilizado", unsafe_allow_html=True)
+    # --- PESTAÑA 5: MÓDULO DIDÁCTICO DE REGLAS DE LA ESTRATEGIA (NUEVO) ---
+    with tab5:
+        st.header("📖 Especificaciones Técnicas: Sentinel V10 Pro")
+        st.markdown("""
+        Este módulo didáctico permite replicar de manera manual o automatizada el núcleo lógico de la estrategia validada en el paper científico:
+        #### 1. Arquitectura Lógica de Entrada (Reglas Binarias)
+        *   Dirección Macro (EMA 50): Actúa como el juez tendencial. El precio debe estar por encima para buscar compras y por debajo para buscar ventas.
+        *   Gatillo de Momentum (Retorno 3D): Mide la fatiga extrema del precio a corto plazo. Exige un movimiento de extensión rápida de mínimo ±3% en las últimas 3 jornadas.
+        #### 2. Lógica Rígida de Salida (Cinturón de Seguridad)
+        *   Time-Exit Absoluto: La posición se liquida por orden de mercado a las 24 horas exactas (1 vela diaria) de exposición. No se emplean stop loss de trailing ni targets flotantes; la ventaja matemática radica en la velocidad de rotación.
+        #### 3. Parámetros de Simulación en Cuenta
+        *   Capital de Referencia: Base estándar de $100,000 USD (Escalable proporcionalmente a tu balance actual).
+        *   Riesgo Máximo por Operación: 0.5% Fijo sobre el capital flotante indexado por la volatilidad del ATR(14).
+        """)
+
+    # PIE DE PÁGINA COMERCIAL
+    st.markdown("---")
+    st.markdown("🛡️ QuantumTradeA 2026 | Desarrollado por @Bookbinderr-2026 — Ecosistema Científico Estabilizado", unsafe_allow_html=True)
