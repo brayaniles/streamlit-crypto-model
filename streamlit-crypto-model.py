@@ -19,14 +19,15 @@ tf.random.set_seed(7)
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="AI Crypto Strategist & Sentinel V10 Pro", layout="wide")
 
-# --- CONFIGURACIÓN DE CREDENCIALES (SEGURIDAD DE PRODUCCIÓN) ---
+# --- CONFIGURACIÓN DE CREDENCIALES OCULTAS (SEGURIDAD DE PRODUCCIÓN) ---
 TOKEN_TELEGRAM = st.secrets["TELEGRAM_TOKEN"]
 CLAVE_MAESTRA = st.secrets["MAINTENANCE_PASSWORD"]
 CHAT_ID = "@quantumtradear"
 
 def despachar_alerta_telegram(mensaje):
     """Envía notificaciones de rupturas matemáticas al canal de QuantumTradeA."""
-    url = f"https://telegram.org{TOKEN_TELEGRAM}/sendMessage"
+    # DIRECCIÓN MÁSTER
+    url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload, timeout=5)
