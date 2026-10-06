@@ -198,8 +198,38 @@ else:
         else:
             st.info(estado_senal)
 
-    # --- PESTAÑA 2: MODELO LSTM CON SPLIT TEMPORAL (MEJORA GITHUB) ---
+        # --- PESTAÑA 2: MODELO LSTM CON SPLIT TEMPORAL (MEJORA GITHUB CORREGIDA) ---
     with tab2:
+        st.subheader("🤖 Algoritmo de Redes Neuronales Recurrentes (LSTM)")
+        st.write("Presiona el botón de abajo para entrenar el modelo en tiempo real utilizando la fijación de semilla reproducible (SEED=7).")
+        
+        if st.button("🔥 Iniciar Entrenamiento Predictivo LSTM", key="btn_ia_7d"):
+            with st.spinner("La IA está analizando la microestructura y los patrones de velas..."):
+                scaler = MinMaxScaler()
+                
+                # MEJORA CRÍTICA: Escalamos ajustando SOLO con el tramo de entrenamiento para evitar fuga de datos
+                data_values = df[['Close']].values
+                split_idx = int(len(data_values) * 0.8)
+                train_data = data_values[:split_idx]
+                scaler.fit(train_data)
+                
+                scaled_all = scaler.transform(data_values)
+                X, y = [], []
+                for i in range(60, len(scaled_all)):
+                    X.append(scaled_all[i-60:i, 0])
+                    y.append(scaled_all[i, 0])
+                X, y = np.array(X), np.array(y)
+                X = np.reshape(X, (X.shape[0], X.shape[1], 1))
+                
+                model = Sequential([
+                    LSTM(50, return_sequences=True, input_shape=(60, 1)),
+                    Dropout(0.2),
+                    LSTM(50),
+                    Dense(1)
+                ])
+                model.compile(optimizer='adam', loss='mse')
+                model.fit(X, y, epochs=epochs_n, batch_size=32, verbose=0)
+                
                 # Proyección futura de 7 días
                 future_preds = []
                 current_batch = scaled_all[-60:].reshape(1, 60, 1)
@@ -211,9 +241,10 @@ else:
                 preds_7d = scaler.inverse_transform(np.array(future_preds).reshape(-1, 1))
                 f_dates = [df.index[-1] + pd.Timedelta(days=i) for i in range(1, 8)]
                 
+                # Renderizado de gráfico interactivo Plotly
                 fig_7d = go.Figure()
                 fig_7d.add_trace(go.Scatter(x=f_dates, y=preds_7d.flatten(), mode='lines+markers', name="Proyección IA", line=dict(color='#EF4444', width=3)))
-                fig_7d.update_layout(template="plotly_dark", title="Tendencia Proyectada Próximos 7 Días")
+                fig_7d.update_layout(template="plotly_dark", title="Tendencia Proyectada Próximos 7 Días", margin=dict(l=10, r=10, t=30, b=10))
                 st.plotly_chart(fig_7d, use_container_width=True)
                 
                 # Despliegue de la tabla predictiva con el cálculo de variación porcentual
