@@ -19,9 +19,9 @@ tf.random.set_seed(7)
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="AI Crypto Strategist & Sentinel V10 Pro", layout="wide")
 
-# --- CREDENCIALES AUTOMATIZADAS DE TELEGRAM (REEMPLAZAR CON TU TOKEN) ---
-TOKEN_TELEGRAM = "8538121538:AAEivF6vOjBHStDvt0-wE-Jo3K7XfovmIDQ"
-CHAT_ID = "@quantumtradear" # Alias o ID obtenido mediante @userinfobot
+# --- CREDENCIALES AUTOMATIZADAS DE TELEGRAM ---
+TOKEN_TELEGRAM = "8778233736:AAFXXdSx_XmX81wnE8rTgrRa9yvZnyl1_IM"
+CHAT_ID = "@quantumtradear"  
 
 def despachar_alerta_telegram(mensaje):
     """Envía notificaciones de rupturas matemáticas al canal de QuantumTradeA."""
