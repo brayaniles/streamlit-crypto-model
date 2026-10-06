@@ -24,8 +24,10 @@ TOKEN_TELEGRAM = "8778233736:AAFXXdSx_XmX81wnE8rTgrRa9yvZnyl1_IM"
 CHAT_ID = "@quantumtradear"  
 
 def despachar_alerta_telegram(mensaje):
+   def despachar_alerta_telegram(mensaje):
     """Envía notificaciones de rupturas matemáticas al canal de QuantumTradeA."""
-    url = f"https://telegram.org{TOKEN_TELEGRAM}/sendMessage"
+    # DIRECCIÓN: Dominio API 
+    url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload, timeout=5)
@@ -133,7 +135,7 @@ else:
 
         if "🚀" in estado_senal:
             st.success(estado_senal)
-            # Despacho automático a tu robot de Telegram
+            # Despacho automático a robot de Telegram
             msg_alert = f"🚨 *NUEVA SEÑAL SENTINEL V10 PRO*\n\nActivo: {crypto}\nTipo: LONG 🚀\nPrecio Entrada: ${precio_actual:,.2f}\n⏱️ Salida: 24 Horas Rígidas"
             if st.button("✈️ Despachar Alerta a Telegram"):
                 despachar_alerta_telegram(msg_alert)
@@ -250,6 +252,6 @@ else:
         *   Riesgo Máximo por Operación: 0.5% Fijo sobre el capital flotante indexado por la volatilidad del ATR(14).
         """)
 
-    # PIE DE PÁGINA COMERCIAL
+    # DESARROLLADOR
     st.markdown("---")
     st.markdown("🛡️ QuantumTradeA 2026 | Desarrollado por @Bookbinderr-2026 — Ecosistema Científico Estabilizado", unsafe_allow_html=True)
