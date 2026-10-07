@@ -271,21 +271,47 @@ else:
         st.table(pd.DataFrame(tabla_data))
         st.info("💡 Dictamen del Quants: La Sentinel V10 Pro demuestra una robustez matemática impecable fuera de muestra. Al mitigar el riesgo al 0.5% del balance, el Drawdown se encajona por debajo del 3%, dándole una inmunidad defensiva total frente a cambios de régimen de mercado.")
 
-    # --- PESTAÑA 4: NOTICIAS (RSS CORREGIDO) ---
+        # --- PESTAÑA 4: NOTICIAS (RSS ESTABILIZADO - ENFOQUE CRYPTONEWS / COINDESK) ---
     with tab4:
         st.subheader(f"📰 Despachos del Mercado en Tiempo Real: {crypto}")
-        # CORRECCIÓN DE LA URL: Formato XML oficial de titulares de Yahoo Finance sin strings malformados
-        ticker_rss = crypto.replace("-", "")
-        rss_url = f"https://yahoo.com{ticker_rss}"
-        feed = feedparser.parse(rss_url)
+        st.write("Monitoreo de titulares macroeconómicos e inyección de fundamentales institucionales globales.")
         
+        # CANAL ALTERNATIVO ROBUSTO: Feed RSS institucional abierto de CoinDesk/CryptoNews
+        # Limpiamos el ticker (ej: cambia "BTC-USD" a "bitcoin" o "ETH-USD" a "ethereum" para el filtrado)
+        asset_keyword = crypto.split("-")[0].lower()
+        if asset_keyword == "btc": asset_keyword = "bitcoin"
+        elif asset_keyword == "eth": asset_keyword = "ethereum"
+        elif asset_keyword == "sol": asset_keyword = "solana"
+        
+        # Endpoint unificado y libre de bloqueos para Streamlit Cloud
+        rss_url = "https://coindesk.com"
+        
+        with st.spinner("Conectando con la pasarela de despachos de CryptoNews..."):
+            feed = feedparser.parse(rss_url)
+            
         if feed.entries:
-            for entry in feed.entries[:5]:
-                with st.expander(f"🔹 {entry.title}"):
-                    st.write(getattr(entry, 'summary', 'Contenido resumido disponible en el enlace principal.'))
-                    st.link_button("Leer Despacho Completo", entry.link)
+            noticias_despachadas = 0
+            for entry in feed.entries:
+                # Filtramos de forma elástica para que solo muestre noticias relevantes al activo seleccionado
+                titulo = entry.title.lower()
+                descripcion = getattr(entry, 'summary', '').lower()
+                
+                if asset_keyword in titulo or asset_keyword in descripcion or noticias_despachadas < 3:
+                    with st.expander(f"🔹 {entry.title}"):
+                        st.write(getattr(entry, 'summary', 'Contenido extendido disponible en el despacho principal.'))
+                        st.caption(f"📅 Publicado: {getattr(entry, 'published', 'Fecha no especificada')}")
+                        st.link_button("Leer Despacho Completo", entry.link, key=f"ln_news_{noticias_despachadas}")
+                    
+                    noticias_despachadas += 1
+                    # Limitamos a un techo de 5 titulares para no saturar la vista del portafolio
+                    if noticias_despachadas >= 5:
+                        break
+                        
+            if noticias_despachadas == 0:
+                st.info(f"😴 Mercado lateral en los fundamentales. No se localizaron alertas críticas específicas para {crypto} en las últimas horas.")
         else:
-            st.info("Buscando contrapartida de noticias recientes. Si no se despliegan, verifica la conexión externa de Streamlit Cloud.")
+            st.error("⚠️ Error de conexión: Los servidores del feed de noticias están temporalmente caídos o saturados. Intenta refrescar la página.")
+
 
                # --- PESTAÑA 5: MÓDULO DIDÁCTICO, ESPECIFICACIONES TÉCNICAS Y CALCULADORA DE LOTAJE ---
     with tab5:
