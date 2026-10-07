@@ -287,23 +287,50 @@ else:
         else:
             st.info("Buscando contrapartida de noticias recientes. Si no se despliegan, verifica la conexión externa de Streamlit Cloud.")
 
-    # --- PESTAÑA 5: MÓDULO DIDÁCTICO DE REGLAS DE LA ESTRATEGIA  ---
+        # --- PESTAÑA 5: MÓDULO DIDÁCTICO Y PROTOCOLO DE EJECUCIÓN PASO A PASO ---
     with tab5:
-        st.header("📖 Especificaciones Técnicas: Sentinel V10 Pro")
+        st.header("📖 Manual Operativo Oficial: Sentinel V10 Pro")
+        st.caption("FAQ y Protocolo Cuantitativo de Ejecución Sistemática Diaria")
+        
+        st.markdown("### 🔬 Conceptos Fundamentales e Implementación")
+        
+        # Estructura didáctica inspirada en el modelo institucional de FAQ de Fade ORB
+        with st.expander("❓ Q1: ¿Cuándo se toma EXACTAMENTE la entrada tras una señal activa?"):
+            st.markdown("""
+            *   **Respuesta Directa:** La entrada **JAMÁS** se ejecuta en tiempo real durante el desarrollo de la jornada si el indicador parpadea. Toda alerta del dictaminador técnico se valida al cierre oficial de la vela diaria (**23:59 UTC**).
+            *   **El Protocolo 'Next Bar Open':** Si al consolidarse el cierre diario las reglas binarias terminan en estado positivo (`GO_LONG` o `GO_SHORT`), la orden de mercado se ingresa de forma obligatoria e inmediata en la **Apertura de la vela del día siguiente (00:00 UTC / 20:00 hora de Caracas)**.
+            *   **Regla de Oro:** Entrar antes o después de la apertura de la nueva vela destruye la ventaja estadística del backtesting, alterando la Esperanza Matemática del sistema.
+            """)
+            
+        with st.expander("❓ Q2: ¿Cuál es el paso a paso exacto para colocar la orden en Binance u otro Broker?"):
+            st.markdown(f"""
+            Para replicar la ventaja matemática de la **Sentinel V10 Pro** sin cometer errores de ejecución manual, sigue este protocolo diario:
+            
+            1.  **Monitoreo del Cierre (19:50 AST):** Diez minutos antes del cierre de la vela diaria de Bitcoin, revisa el panel de control de esta App para verificar si la señal se ha consolidado.
+            2.  **Lectura de la Ficha de Orden:** Si la señal está activa, copia los valores calculados en la **Ficha Estricta de Orden Recomendada** basados en tu capital real.
+            3.  **Apertura de la Orden (20:00 AST):** En el segundo exacto en que abre la nueva vela del día, ejecuta una **Orden de Mercado (Market Order)** de Compra o Venta en tu terminal con el tamaño exacto sugerido en la ficha de la App.
+            4.  **Cinturón de Seguridad (Time-Exit):** Configura una alerta en tu celular. La posición tiene una fecha de caducidad rígida de **exactamente 24 horas (1 vela diaria)**. Al llegar a las 20:00 AST del día siguiente, cierras la posición a mercado inmediato, sin importar si va en ganancia o pérdida.
+            """)
+            
+        with st.expander("❓ Q3: ¿Por qué este sistema no utiliza un Stop Loss técnico tradicional?"):
+            st.markdown("""
+            *   **Respuesta Cuantitativa:** En la microestructura moderna de Bitcoin post-ETFs, las mesas de alta frecuencia ejecutan barridas constantes de liquidez (*stop-hunts*) en las zonas de soporte y resistencia obvias antes de desarrollar el movimiento direccional real.
+            *   **La Ventaja del Time-Exit:** Obligar al bot a salir estrictamente a las 24 horas actúa como nuestro verdadero cinturón de seguridad. Si el momentum es real, el mercado paga rápido; si se gira o lateraliza, el riesgo se neutraliza limitando el tiempo de exposición al mercado vivo, encajonando el drawdown promedio en simulaciones por debajo del 3%.
+            """)
+
+        st.markdown("---")
+        st.subheader("📐 Especificaciones Técnicas del Núcleo Lógico")
+        
         st.markdown("""
-        Este módulo didáctico permite replicar de manera manual o automatizada el núcleo lógico de la estrategia validada en el paper científico:
-        
         #### 1. Arquitectura Lógica de Entrada (Reglas Binarias)
-        *   **Dirección Macro (EMA 50):** Actúa como el juez tendencial. El precio debe estar por encima para buscar compras y por debajo para buscar ventas.
-        *   **Gatillo de Momentum (Retorno 3D):** Mide la fatiga extrema del precio a corto plazo. Exige un movimiento de extensión rápida de mínimo ±3% en las últimas 3 jornadas.
+        *   **Dirección Macro (EMA 50):** Actúa como el juez institucional del sesgo. El precio de cierre diario debe estar por encima para autorizar compras (`LONG`) y por debajo para autorizar ventas (`SHORT`).
+        *   **Gatillo de Momentum Absoluto (Retorno 3D):** Mide la fatiga y sobreextensión a corto plazo. Exige un movimiento de contracción o expansión de mínimo **±3%** acumulado en las últimas 3 jornadas de negociación.
         
-        #### 2. Lógica Rígida de Salida (Cinturón de Seguridad)
-        *   **Time-Exit Absoluto:** La posición se liquida por orden de mercado a las **24 horas exactas (1 vela diaria)** de exposición. No se emplean stop loss de trailing ni targets flotantes; la ventaja matemática radica en la velocidad de rotación.
-        
-        #### 3. Parámetros de Simulación en Cuenta
-        *   **Capital de Referencia:** Base estándar de \$100,000 USD (Escalable proporcionalmente a tu balance actual).
-        *   **Riesgo Máximo por Operación:** 0.5% Fijo sobre el capital flotante indexado por la volatilidad del ATR(14).
+        #### 2. Parámetros Monetarios y Gestión de Capital
+        *   **Capital Base de Simulación:** Estándar de \$100,000.00 USD (Parametrizado de forma elástica sobre tu capital operativo real ingresado en el menú lateral).
+        *   **Riesgo Máximo Asignado:** **0.5% Fijo** sobre el balance de la cuenta, indexado de forma automatizada por la volatilidad del **ATR(14)** al momento de la apertura para modular el límite de pérdida.
         """)
+
 
     # DESARROLLADOR
     st.markdown("---")
