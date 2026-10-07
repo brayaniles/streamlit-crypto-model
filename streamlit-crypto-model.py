@@ -287,7 +287,7 @@ else:
         else:
             st.info("Buscando contrapartida de noticias recientes. Si no se despliegan, verifica la conexión externa de Streamlit Cloud.")
 
-           # --- PESTAÑA 5: MÓDULO DIDÁCTICO, PROTOCOLO GLOBAL Y CALCULADORA DE LOTAJE ---
+               # --- PESTAÑA 5: MÓDULO DIDÁCTICO, ESPECIFICACIONES TÉCNICAS Y CALCULADORA DE LOTAJE ---
     with tab5:
         st.header("📖 Manual Operativo Oficial: Sentinel V10 Pro")
         st.caption("FAQ y Protocolo Cuantitativo de Ejecución Sistemática Internacional (Estándar UTC)")
@@ -308,7 +308,7 @@ else:
             1.  **Monitoreo del Cierre (23:50 UTC):** Diez minutos antes del cierre de la vela diaria internacional, revisa el panel de control de esta App para verificar si la señal se ha consolidado.
             2.  **Lectura de la Ficha de Orden:** Si la señal está activa, copia los valores calculados en la **Ficha Estricta de Orden Recomendada** basados en tu capital real.
             3.  **Apertura de la Orden (00:00 UTC):** Inmediatamente en el segundo en que abre la nueva barra del día, ejecuta una **Orden de Mercado (Market Order)** de Compra o Venta en tu terminal con el tamaño exacto sugerido.
-            4.  **Cinturón de Seguridad (Time-Exit):** La posición tiene una fecha de caducidad rígida de **exactamente 24 horas (1 vela diaria)**. Al llegar a las 23:59 UTC del día siguiente, cierras la posición a mercado inmediato, sin importar si va en ganancia o pérdida.
+            4.  **Cinturón de Seguridad (Time-Exit):** La posición tiene una fecha de caducidad rígida de **exactly 24 horas (1 vela diaria)**. Al llegar a las 23:59 UTC del día siguiente, cierras la posición a mercado inmediato, sin importar si va en ganancia o pérdida.
             """)
             
         with st.expander("❓ Q3: ¿Por qué este sistema no utiliza un Stop Loss técnico tradicional?"):
@@ -319,17 +319,25 @@ else:
 
         st.markdown("---")
         st.subheader("📐 Especificaciones Técnicas del Núcleo Lógico")
+        st.write("Este módulo didáctico permite replicar de manera manual o automatizada el componente entero de la estrategia validada en el paper científico:")
         
         st.markdown("""
         #### 1. Arquitectura Lógica de Entrada (Reglas Binarias)
-        *   **Dirección Macro (EMA 50):** Actúa como el juez institucional del sesgo. El precio de cierre diario debe estar por encima para autorizar compras (`LONG`) y por debajo para autorizar ventas (`SHORT`).
-        *   **Gatillo de Momentum Absoluto (Retorno 3D):** Mide la fatiga y sobreextensión a corto plazo. Exige un movimiento de contracción o expansión de mínimo **±3%** acumulado en las últimas 3 jornadas de negociación.
+        *   **Dirección Macro (EMA 50):** Actúa como el juez tendencial e institucional del sesgo. El precio de cierre diario debe estar por encima para buscar y autorizar exclusivamente compras (`LONG`), y por debajo para buscar y autorizar exclusivamente ventas (`SHORT`).
+        *   **Gatillo de Momentum Absoluto (Retorno 3D):** Mide la fatiga extrema del precio a corto plazo. Exige un movimiento de extensión rápida o contracción de mínimo **±3%** acumulado en las últimas 3 jornadas de negociación.
+        
+        #### 2. Lógica Rígida de Salida (Cinturón de Seguridad)
+        *   **Time-Exit Absoluto:** La posición se liquida por orden de mercado a las **24 horas exactas (1 vela diaria)** de exposición. No se emplean stop loss de trailing ni targets flotantes; la ventaja matemática radica en la velocidad de rotación del capital de forma óptima.
+        
+        #### 3. Parámetros Monetarios y Gestión de Capital
+        *   **Capital Base de Simulación:** Estándar de \$100,000.00 USD (Parametrizado de forma elástica sobre tu capital operativo real ingresado en el menú lateral).
+        *   **Riesgo Máximo Asignado:** **0.5% Fijo** sobre el balance de la cuenta, indexado de forma automatizada por la volatilidad del **ATR(14)** al momento de la apertura para modular el límite de pérdida.
         """)
 
         # --- SIMULACIÓN Y CALCULADORA DINÁMICA POR ATR(14) EN VIVO ---
         st.markdown("---")
         st.subheader("🧮 Calculadora de Lotaje Institucional por ATR(14)")
-        st.write("Utiliza este módulo didáctico para calcular el tamaño exacto de tu posición en cualquier activo del mundo, indexando el riesgo según la volatilidad real del momento.")
+        st.write("Utiliza este módulo didáctico interactivo para calcular el tamaño exacto de tu posición en cualquier activo del mundo, indexando el riesgo según la volatilidad real del momento.")
         
         # Bloque de inputs interactivos para el usuario
         col_calc1, col_calc2 = st.columns(2)
