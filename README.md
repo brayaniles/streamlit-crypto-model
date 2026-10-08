@@ -17,33 +17,46 @@ mediciones reales.
 
 | Qué | Cómo | Resultado |
 |---|---|---|
-| Reglas de entrada/salida | `backtest.py` y pestaña 3 | **Edge en BTC, no en ETH ni SOL** |
+| Reglas de entrada/salida | `backtest.py` y pestaña 3 | **Sin ventaja demostrable** |
 | Predicción del nivel de precio (LSTM) | `validate.py` y pestaña 2 | **No supera al naive** |
 
-### Las reglas de trading: funciona en BTC, falla en ETH y SOL
+### Las reglas de trading: no se ha demostrado ventaja
 
 `backtest.py` simula las reglas exactas de la app (señal sobre el cierre de T, entrada al
-`Open[T+1]`, salida a `Close[T+1]`, dimensionado por ATR, 5 bps de coste por lado) y las
-compara contra **entradas aleatorias con el mismo número de operaciones y el mismo tamaño de
-posición** — la única forma de saber si el resultado viene de las reglas o solo del
-dimensionamiento.
+`Open[T+1]`, salida a `Close[T+1]`, dimensionado por ATR, 5 bps por lado) sobre **toda la
+historia disponible**, y las compara contra entradas aleatorias con el mismo número de
+operaciones y el mismo tamaño de posición.
 
-| Activo | Retorno | DD máx | Ops | Win | Payoff | Percentil vs. azar | Config. positivas |
+| Activo | Período | Retorno neto | Bruto (sin costes) | DD máx | Ops | t | IC 95% media/trade |
 |---|---|---|---|---|---|---|---|
-| BTC-USD | **+11.3%** | 2.17% | 189 | 59.3% | 1.12 | **99.6%** | 9/9 |
-| ETH-USD | −7.1% | 12.03% | 277 | 52.7% | 0.73 | 28.1% | 3/9 |
-| SOL-USD | −7.6% | 8.99% | 383 | 48.8% | 0.90 | 30.0% | 0/9 |
+| BTC-USD | 2014-2026 | **−2.4%** | +4.0% | 13.3% | 582 | +0.12 | [−0.31%, +0.34%] |
+| ETH-USD | 2017-2026 | **−9.5%** | negativo | 13.3% | 560 | +0.03 | [−0.39%, +0.39%] |
+| SOL-USD | 2020-2026 | **−5.4%** | negativo | 9.0% | 521 | −0.01 | [−0.54%, +0.52%] |
 
-**BTC** supera al azar por margen amplio y gana en las 9 combinaciones de parámetros
-(EMA 20/50/100 × momentum ±2/3/4%): no es curve fitting. Su weakness es el retorno
-absoluto — un +2.2% de CAGR frente al +5.7% de buy & hold, aunque con un 2.17% de drawdown
-contra el 76.63%. **ETH y SOL pierden dinero y quedan por debajo de la mediana aleatoria**:
-en esos activos las reglas no aportan nada.
+**En los tres activos el intervalo de confianza al 95% incluye el cero.** No se puede
+rechazar que el retorno medio por operación sea nulo. En ETH y SOL la estrategia pierde
+dinero incluso con comisión cero.
 
-Faltaría replicar el análisis por años y aumentar la muestra para ETH/SOL antes de
-concluir nada; 5 años y ~300 operaciones dan poco poder estadístico.
+Tres cosas que hay que mirar antes de creer cualquier cifra de esta estrategia:
 
-### La predicción de precio no tiene edge
+1. **El resultado depende de la ventana temporal.** Con los últimos 5 años (2021-2026) BTC
+   da +11.3% y queda en el percentil 99.7 frente al azar. Con los 12 años completos da
+   −2.4% y percentil 72. El +11.3% era un artefacto de haber mirado solo la década alcista.
+2. **Los costes se comen todo el edge.** El equilibrio de BTC está en **3.1 bps por lado**,
+   por debajo de la comisión taker típica de un exchange. ETH y SOL no tienen equilibrio:
+   el bruto ya es negativo.
+3. **Unas pocas operaciones explican el resultado.** En BTC, las 5 mejores operaciones suman
+   el 482% del retorno total; en ETH, el 1990%. Sin ellas el resultado es negativo.
+
+Consistencia por años (BTC): negativo de 2014 a 2020, positivo de 2021 a 2026. ETH y SOL
+alternan signo sin patrón. Es dependencia de régimen, no una ventaja estable.
+
+> Nota sobre método: las operaciones son diarias y pueden ser consecutivas, así que sus
+> retornos tienen autocorrelación (−0.10 en BTC) y no son iid. El intervalo bootstrap
+> asume independencia, luego es optimista. Aun así, el margen es tan pequeño que la
+> conclusión no cambia.
+
+### La predicción de precio tampoco tiene edge
 
 ```
 python validate.py BTC-USD
@@ -75,7 +88,10 @@ baseline.
 - **La señal se evalúa sobre la vela en curso.** yfinance entrega el último día incompleto,
   así que precio, retorno 3D y señal cambian durante la jornada. El protocolo exige validar a
   las 23:59 UTC; la app lo advierte con un banner explícito.
-- **Sin costes de transacción** en ningún cálculo.
+- **El backtest no modela slippage ni profundidad de libro**, solo una comisión plana. Con un
+  edge tan fino, esto es material: el equilibrio está en 3.1 bps por lado para BTC.
+- **Muestra estadística corta.** 9-12 años y ~550 operaciones dan poco poder estadístico:
+  el intervalo de confianza del retorno medio es de ±0.3%, mayor que el propio retorno.
 
 ---
 
@@ -134,15 +150,19 @@ baselines. No necesita TensorFlow, así que corre en segundos.
 ### Backtest de las reglas de trading
 
 ```bash
-python backtest.py                                  # los tres activos
+python backtest.py                                  # los tres activos, toda la historia
 python backtest.py BTC-USD --sensibilidad           # barrido EMA 20/50/100 x momentum ±2/3/4%
-python backtest.py ETH-USD --fee 0.001              # con otros costes
+python backtest.py ETH-USD --period 5y              # acortar la ventana (y ver cómo cambia el veredicto)
+python backtest.py BTC-USD --fee 0.001              # otros costes
+python backtest.py BTC-USD --rapido                 # sin bootstrap, desglose anual ni barrido de costes
 ```
 
 Sin lookahead: la señal se evalúa sobre el cierre de T y se ejecuta al `Open[T+1]`, con
-salida a `Close[T+1]`. Incluye el baseline aleatorio (2.000 réplicas por defecto; ajustable
-con `--simulaciones`), que es la comparación que realmente importa. La pestaña 3 de la app
-Ejecuta este mismo backtest al vuelo sobre el activo que selecciones.
+salida a `Close[T+1]`. Cada corrida muestra retorno, baselines, split cronológico,
+significación (bootstrap + t-estadístico), desglose por año, barrido de costes con punto de
+equilibrio, y el baseline aleatorio (2.000 réplicas por defecto, ajustable con
+`--simulaciones`), que es la comparación que realmente importa. La pestaña 3 de la app
+ejecuta este mismo backtest al vuelo sobre el activo que selecciones.
 
 ### Tests
 

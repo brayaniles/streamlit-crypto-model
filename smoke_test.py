@@ -47,6 +47,9 @@ check("No existe un backtest" not in todo, "la pestaña 3 ya no afirma que falte
 check("No hay cifras escritas a mano" in todo, "la pestaña 3 declara que las cifras se calculan")
 check("validate.py" in todo, "se menciona validate.py")
 check("naive" in todo.lower(), "se documenta el contraste contra el baseline naive")
+for falsa in ["totalmente protegida", "Posición totalmente protegida",
+              "inmunidad defensiva", "robustez impecable", "Búfer QuantumTradeA"]:
+    check(falsa not in todo, f"sin afirmacion de proteccion total: {falsa!r}")
 
 print("\n4) Etiqueta de vela en curso")
 check(any("en curso" in w.value for w in at.warning), "avisa que la última vela está en curso")
@@ -100,14 +103,19 @@ if btn_bt:
     errs = [e.value for e in at3.error]
     check(not any("No se pudo ejecutar" in e for e in errs), f"el backtest se ejecuto: {errs}")
     labels = [m.label for m in at3.metric]
-    for esperado in ("Retorno Sentinel V10", "Drawdown máximo", "Operaciones", "Win rate",
-                     "Payoff medio", "Profit factor", "Recovery factor"):
+    for esperado in ("Retorno neto", "Retorno bruto (sin costes)", "Drawdown máximo",
+                     "Win rate", "Payoff medio", "Profit factor", "Recovery factor",
+                     "t-estadístico", "IC 95% inferior", "IC 95% superior"):
         check(any(esperado in l for l in labels), f"metrica presente: {esperado}")
     subs = [s.value for s in at3.subheader]
     check(any("Backtest Real" in s for s in subs), f"subheader del backtest: {subs}")
-    # La ventana de out-of-sample debe aparecer con sus dos mitades.
     txt = " ".join(m.value for m in at3.markdown)
     check("In-sample" in txt and "Out-of-sample" in txt, "muestra el split in/out-of-sample")
+    check("t-test" not in txt and "t-estadístico" in " ".join(labels),
+          "expone significacion estadistica")
+    todo3 = " ".join([s.value for s in at3.subheader] + [i.value for i in at3.info]
+                     + [w.value for w in at3.warning] + [e.value for e in at3.error] + [txt])
+    check("ventaja estadística" in todo3, "el veredicto habla de ventaja estadistica")
 
 print("\n7) Aritmetica de dimensionamiento por ATR (recalculo independiente)")
 import numpy as np

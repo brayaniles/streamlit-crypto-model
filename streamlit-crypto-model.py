@@ -91,7 +91,7 @@ def _f(x):
 @st.cache_data(ttl=3600, show_spinner=False)
 def ejecutar_backtest(ticker, simulaciones=1000):
     """Ejecuta el backtest real de las reglas y devuelve las métricas ya calculadas."""
-    ind = bt.indicadores(bt.descargar(ticker))
+    ind = bt.indicadores(bt.descargar(ticker, "max"))
     ops, equity, dd = bt.simular(ind)
     m = bt.metricas(ops, equity, dd)
     bh = bt.baseline_buy_hold(ind)
@@ -106,6 +106,22 @@ def ejecutar_backtest(ticker, simulaciones=1000):
     pct = float((ale < ops["pnl"].sum()).mean()) if ale is not None else float("nan")
     ale_med = float(np.median(ale)) if ale is not None else 0.0
 
+    sig = bt.significatividad(ops) or {}
+    be = bt.breakeven_fee(ind)
+    # Retorno bruto: sin comisión, para ver cuánto edge real hay antes de los costes.
+    o0, e0, d0 = bt.simular(ind, fee=0.0)
+    m0 = bt.metricas(o0, e0, d0)
+    # ¿Cuántos años positivos hay? Si cambia de signo por régimen, no es estable.
+    anuales = []
+    for y in sorted(set(ind.index.year)):
+        sub = ind[ind.index.year == y]
+        if len(sub) < 30:
+            continue
+        oy, ey, dy = bt.simular(sub)
+        my = bt.metricas(oy, ey, dy)
+        if my.get("trades", 0):
+            anuales.append(my["retorno_total"])
+
     def limpiar(d, extra=None):
         out = {k: _f(v) for k, v in d.items() if k not in ("trades",)}
         out["trades"] = int(d.get("trades", 0))
@@ -113,13 +129,24 @@ def ejecutar_backtest(ticker, simulaciones=1000):
             out.update(extra)
         return out
 
-    return (
-        limpiar(m, {"n_velas": len(ind), "rango": (str(ind.index[0].date()), str(ind.index[-1].date()))}),
-        limpiar(bh),
-        str(corte.date()),
-        limpiar(mis), limpiar(mos),
-        pct, ale_med,
-    )
+    return {
+        "estrategia": limpiar(m, {"n_velas": len(ind),
+                                  "rango": (str(ind.index[0].date()), str(ind.index[-1].date()))}),
+        "buy_hold": limpiar(bh),
+        "corte": str(corte.date()),
+        "in_sample": limpiar(mis),
+        "out_sample": limpiar(mos),
+        "bruto": limpiar(m0),
+        "pct_azar": pct,
+        "ale_med": ale_med,
+        "sig": {"ic_lo": sig.get("ic", (None, None))[0], "ic_hi": sig.get("ic", (None, None))[1],
+                "t": _f(sig.get("t")), "media": _f(sig.get("media")),
+                "ac1": _f(sig.get("ac1")), "share_top5": _f(sig.get("share_top5")),
+                "n": sig.get("n", 0)},
+        "breakeven_fee": float(be),
+        "anios_positivos": int(sum(1 for r in anuales if r > 0)),
+        "anios_total": len(anuales),
+    }
 
 # --- INTERFAZ LATERAL (SIDEBAR) ---
 with st.sidebar:
@@ -376,86 +403,133 @@ else:
         st.caption("Las métricas se calculan ejecutando `backtest.py` sobre datos de yfinance. "
                    "No hay cifras escritas a mano en esta pestaña.")
         st.markdown(
-            "Las versiones anteriores mostraban aquí una tabla de Win Rate, Payoff, Drawdown y "
-            "Factor de Recuperación con números inventados y un dictamen de *robustez impecable*. "
-            "Se sustituyó por una simulación real de las reglas: entrada al día siguiente a la "
-            "señal, salida a las 24 h, dimensionamiento por ATR y costes de comisión."
+            "Las versiones anteriores mostraban aquí Win Rate, Payoff, Drawdown y Factor de "
+            "Recuperación escritos a mano, sin una línea de backtest que los calculara. Ahora se "
+            "simulan las reglas reales: señal sobre el cierre de T, entrada al `Open[T+1]`, "
+            "salida a `Close[T+1]`, dimensionado por ATR y costes de comisión."
         )
 
         if st.button("🧪 Ejecutar backtest sobre el activo seleccionado", key="btn_backtest"):
             with st.spinner(f"Simulando las reglas Sentinel V10 sobre {crypto}..."):
                 try:
-                    bt = ejecutar_backtest(crypto)
+                    r = ejecutar_backtest(crypto)
                     error_bt = None
                 except Exception as exc:
-                    bt, error_bt = None, f"{type(exc).__name__}: {exc}"
+                    r, error_bt = None, f"{type(exc).__name__}: {exc}"
 
             if error_bt:
                 st.error(f"No se pudo ejecutar el backtest: {error_bt}")
             else:
-                m, bh, corte, mis, mos, pct, ale_med = bt
-                st.success(f"Backtest completado sobre {m['n_velas']} velas "
+                m, bh = r["estrategia"], r["buy_hold"]
+                st.success(f"Backtest sobre {m['n_velas']} velas "
                            f"({m['rango'][0]} → {m['rango'][1]}).")
 
-                st.markdown("#### Estrategia frente a buy & hold")
+                st.markdown("#### Resultado")
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Retorno Sentinel V10", f"{m['retorno_total']:+.2%}")
-                c2.metric("Drawdown máximo", f"{m['dd_max']:.2%}")
-                c3.metric("Retorno buy & hold", f"{bh['retorno_total']:+.2%}")
-                c4.metric("Drawdown buy & hold", f"{bh['dd_max']:.2%}")
+                c1.metric("Retorno neto", f"{m['retorno_total']:+.2%}")
+                c2.metric("Retorno bruto (sin costes)", f"{r['bruto']['retorno_total']:+.2%}")
+                c3.metric("Drawdown máximo", f"{m['dd_max']:.2%}")
+                c4.metric("CAGR", f"{m['cagr']:+.2%}")
 
-                st.markdown("#### Métricas de la estrategia")
-                d1, d2, d3 = st.columns(3)
-                d1.metric("Operaciones", f"{m['trades']}")
-                d2.metric("Win rate", f"{m['win_rate']:.2%}")
-                d3.metric("Payoff medio", f"{m['payoff']:.2f}x")
-                d4, d5, d6 = st.columns(3)
-                d4.metric("Profit factor", f"{m['profit_factor']:.2f}")
-                d5.metric("CAGR", f"{m['cagr']:+.2%}")
-                d6.metric("Recovery factor", f"{m['recovery_factor']:.2f}")
+                st.markdown("#### Comparado con buy & hold")
+                d1, d2, d3, d4 = st.columns(4)
+                d1.metric("B&H retorno", f"{bh['retorno_total']:+.2%}")
+                d2.metric("B&H CAGR", f"{bh['cagr']:+.2%}")
+                d3.metric("B&H drawdown", f"{bh['dd_max']:.2%}")
+                d4.metric("Operaciones", f"{m['trades']}")
 
-                st.markdown(f"#### Split cronológico (corte en {corte})")
-                e1, e2 = st.columns(2)
-                e1.markdown(f"**In-sample** — {mis['trades']} operaciones · win {mis['win_rate']:.1%} · "
-                            f"retorno {mis['retorno_total']:+.2%} · dd {mis['dd_max']:.2%}")
-                e2.markdown(f"**Out-of-sample** — {mos['trades']} operaciones · win {mos['win_rate']:.1%} · "
-                            f"retorno {mos['retorno_total']:+.2%} · dd {mos['dd_max']:.2%}")
+                st.markdown("#### Métricas por operación")
+                e1, e2, e3 = st.columns(3)
+                e1.metric("Win rate", f"{m['win_rate']:.2%}")
+                e2.metric("Payoff medio", f"{m['payoff']:.2f}x")
+                e3.metric("Profit factor", f"{m['profit_factor']:.2f}")
+                f1, f2 = st.columns(2)
+                f1.metric("Recovery factor", f"{m['recovery_factor']:.2f}")
+                f2.metric("Mejor / peor operación",
+                          f"${m['mejor']:,.0f} / ${m['peor']:,.0f}")
+
+                st.markdown(f"#### Split cronológico (corte en {r['corte']})")
+                g1, g2 = st.columns(2)
+                g1.markdown(f"**In-sample** — {r['in_sample']['trades']} ops · win "
+                            f"{r['in_sample']['win_rate']:.1%} · retorno "
+                            f"{r['in_sample']['retorno_total']:+.2%}")
+                g2.markdown(f"**Out-of-sample** — {r['out_sample']['trades']} ops · win "
+                            f"{r['out_sample']['win_rate']:.1%} · retorno "
+                            f"{r['out_sample']['retorno_total']:+.2%}")
+
+                st.markdown("#### ¿Hay ventaja estadística?")
+                sig = r["sig"]
+                h1, h2, h3, h4 = st.columns(4)
+                h1.metric("t-estadístico", f"{sig['t']:+.2f}")
+                h2.metric("IC 95% inferior", f"{sig['ic_lo']:+.4%}")
+                h3.metric("IC 95% superior", f"{sig['ic_hi']:+.4%}")
+                h4.metric("Peso de las 5 mejores", f"{sig['share_top5']:.0%}")
+
+                if sig["ic_lo"] is not None and sig["ic_lo"] <= 0 <= sig["ic_hi"]:
+                    st.error(
+                        "El intervalo de confianza al 95% **incluye el cero**: no se puede rechazar "
+                        "que el retorno medio por operación sea nulo. **Las reglas no demuestran "
+                        "tener ventaja estadística.**"
+                    )
+                else:
+                    st.info(f"t = {sig['t']:+.2f}. Con |t| < 2 la evidencia es débil aunque el "
+                            "intervalo excluya el cero.")
+
+                if sig["ac1"] is not None and abs(sig["ac1"]) > 0.1:
+                    st.caption(f"Autocorrelación lag-1 de {sig['ac1']:+.3f}: las operaciones diarias "
+                               "no son independientes, así que el intervalo bootstrap es optimista.")
+                if sig["share_top5"] is not None and sig["share_top5"] > 100:
+                    st.warning(
+                        f"Las 5 mejores operaciones aportan el {sig['share_top5']:.0%} del retorno "
+                        "total. Sin ellas el resultado sería negativo: la estrategia depende de "
+                        "unos pocos aciertos extremos."
+                    )
+
+                st.markdown("#### ¿Los costes se comen la ventaja?")
+                if r["breakeven_fee"] == 0:
+                    st.error(
+                        "El retorno **bruto** (sin comisión ninguna) ya es negativo: la estrategia "
+                        "no es rentable ni con costes cero."
+                    )
+                else:
+                    st.warning(
+                        f"El equilibrio está en **{r['breakeven_fee']:.4%} por lado** "
+                        f"({2 * r['breakeven_fee']:.4%} por operación). Por encima de esa comisión "
+                        "la estrategia pierde dinero, aunque el bruto sea positivo."
+                    )
 
                 st.markdown("#### ¿Las reglas aportan valor o solo el dimensionamiento?")
-                st.caption("Comparación contra entradas elegidas al azar con el mismo número de "
-                           "operaciones y el mismo tamaño de posición.")
-                if pct >= 0.95:
-                    st.success(f"La estrategia queda en el **percentil {pct:.1%}** frente a entradas "
-                               f"aleatorias (pnl mediano ${ale_med:,.0f}). Las reglas aportan valor.")
-                elif pct >= 0.80:
-                    st.warning(f"La estrategia queda en el percentil {pct:.1%} frente a entradas "
-                               f"aleatorias (pnl mediano ${ale_med:,.0f}). Evidencia débil.")
+                st.caption(f"Comparación contra entradas elegidas al azar con el mismo número de "
+                           f"operaciones y el mismo tamaño de posición.")
+                if r["pct_azar"] >= 0.95:
+                    st.success(f"Percentil {r['pct_azar']:.1%} frente a entradas aleatorias "
+                               f"(pnl mediano ${r['ale_med']:,.0f}). Las reglas aportan valor.")
+                elif r["pct_azar"] >= 0.80:
+                    st.warning(f"Percentil {r['pct_azar']:.1%} frente a entradas aleatorias "
+                               f"(pnl mediano ${r['ale_med']:,.0f}). Evidencia débil.")
                 else:
-                    st.error(f"La estrategia queda en el **percentil {pct:.1%}**, por debajo de la "
-                             f"mediana aleatoria (${ale_med:,.0f}). En este activo las reglas no "
-                             "superan al azar: el resultado se explica por el dimensionamiento, "
-                             "no por EMA + momentum.")
+                    st.error(f"Percentil **{r['pct_azar']:.1%}**, por debajo o cerca de la mediana "
+                             f"aleatoria (${r['ale_med']:,.0f}). Las reglas no superan al azar: el "
+                             "resultado se explica por el dimensionamiento, no por EMA + momentum.")
 
-                if mos["retorno_total"] <= 0:
-                    st.error(f"Fuera de muestra el retorno es {mos['retorno_total']:+.2%}: negativo.")
-                elif mos["retorno_total"] < mis["retorno_total"] * 0.5:
-                    st.warning(f"Degradación marcada entre in-sample ({mis['retorno_total']:+.2%}) y "
-                               f"out-of-sample ({mos['retorno_total']:+.2%}): síntoma de ajuste a la "
-                               "muestra histórica. Trátalo con escepticismo.")
+                st.markdown("#### Consistencia entre años")
+                st.write(f"Años con retorno positivo: **{r['anios_positivos']} de {r['anios_total']}**. "
+                         "Si el signo cambia según el régimen de mercado, el resultado no es estable "
+                         "y no debe proyectarse al futuro.")
 
         st.markdown("---")
         st.markdown("#### Sobre la predicción de precio (modelo LSTM)")
         st.markdown(
             "El módulo LSTM de la pestaña 2 **no supera** al baseline `mañana = hoy` "
-            "(MAE medido en BTC-USD: LSTM $3.204 frente a naive $1.156). "
+            "(MAE medido en BTC-USD: LSTM $3.205 frente a naive $1.156). "
             "Reproducible con `python validate.py BTC-USD`."
         )
         st.info(
-            "💡 Lectura honesta: el backtest de arriba mide las **reglas de entrada y salida**, y "
-            "sus cifras están calculadas. La predicción del nivel de precio con LSTM **no** tiene "
-            "respaldo medible. Son dos cosas distintas y conviene no mezclarlas."
+            "💡 Conclusión honesta del backtest: **no se ha demostrado ventaja estadística en las "
+            "reglas de entrada y salida**, ni en BTC ni en ETH ni en SOL. El retorno bruto es "
+            "marginal y los costes de transacción lo consumen. La aritmética de gestión de riesgo "
+            "por ATR sí es correcta, pero un dimensionamiento correcto no creaedge por sí solo."
         )
-
               # --- PESTAÑA 4: NOTICIAS (FEEDS RSS REALES, SIN CONTENIDO FABRICADO) ---
     with tab4:
         st.subheader(f"📰 Noticias del Mercado: {crypto}")
@@ -589,9 +663,12 @@ else:
         
         # Mensajes dinámicos de control de apalancamiento para el usuario
         if apalancamiento_requerido > 2.0:
-            st.warning(f"⚠️ Alerta de Margen: Para cumplir esta gestión necesitas un apalancamiento de {apalancamiento_requerido:.1f}x. El software de control institucional de Sentinel recomienda un techo máximo de 2.0x.")
+            st.warning(f"⚠️ Alerta de margen: la gestión que describes requiere un apalancamiento de "
+                       f"{apalancamiento_requerido:.1f}x. El techo de la estrategia es 2.0x.")
         else:
-            st.success(f"✅ Gestión Segura: Nivel de apalancamiento real requerido de {apalancamiento_requerido:.1f}x. Posición totalmente protegida ante el peor escenario de volatilidad.")
+            st.info(f"Nivel de apalancamiento requerido: {apalancamiento_requerido:.1f}x, dentro del "
+                    "techo de 2.0x. Esto limita el margen requerido, **no** la pérdida: sin stop "
+                    "loss, un movimiento adverso puede superar el límite de riesgo calculado.")
 
     # DESARROLLADOR
     st.markdown("---")

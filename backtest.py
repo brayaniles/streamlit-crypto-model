@@ -38,8 +38,8 @@ EMA_SPAN = 50
 MOM_PCT = 3.0
 
 
-def descargar(ticker, años="5y"):
-    df = yf.download(ticker, period=años, progress=False, auto_adjust=True)
+def descargar(ticker, periodo="max"):
+    df = yf.download(ticker, period=periodo, progress=False, auto_adjust=True)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     return df.dropna()
@@ -197,12 +197,88 @@ def linea(nombre, m):
             f" | cagr {m['cagr']:+7.2%}{extra}")
 
 
-def run_ticker(ticker, fee=FEE_POR_LADO, mom=MOM_PCT, ema=EMA_SPAN, simulaciones=2000):
+def significatividad(ops, n_boot=10000, seed=7):
+    """Bootstrap y t-estadístico sobre los retornos por trade.
+
+    AVISO: las operaciones son diarias y pueden ser consecutivas, así que sus
+    retornos tienen autocorrelación y NO son iid. El intervalo bootstrap asume
+    independencia, luego es optimista. Se reporta también la autocorrelación de
+    orden 1 para poder juzgarlo.
+    """
+    r = ops["ret_neto"].to_numpy()
+    n = len(r)
+    if n < 5:
+        return None
+    rng = np.random.default_rng(seed)
+    medias = np.array([rng.choice(r, size=n, replace=True).mean() for _ in range(n_boot)])
+    ic = np.percentile(medias, [2.5, 97.5])
+    t_stat = float(r.mean() / (r.std(ddof=1) / np.sqrt(n)))
+    ac1 = float(np.corrcoef(r[:-1], r[1:])[0, 1]) if n > 3 else float("nan")
+    # Qué fracción del retorno depende de unas pocas operaciones ganadoras.
+    top5 = np.sort(r)[-5:].sum()
+    return {"n": n, "media": float(r.mean()), "ic": (float(ic[0]), float(ic[1])),
+            "t": t_stat, "ac1": ac1, "share_top5": float(top5 / r.sum()) if r.sum() != 0 else float("nan")}
+
+
+def breakeven_fee(ind, max_fee=0.01, tolerancia=0.00005):
+    """Comisión por lado a la que el retorno cae a cero. 0 = nunca es rentable."""
+    o, e, d = simular(ind, fee=0.0)
+    if metricas(o, e, d).get("retorno_total", -1) <= 0:
+        return 0.0
+    lo, hi = 0.0, max_fee
+    for _ in range(20):
+        mid = (lo + hi) / 2
+        o, e, d = simular(ind, fee=mid)
+        if metricas(o, e, d).get("retorno_total", -1) > 0:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo < tolerancia:
+            break
+    return lo
+
+
+def barrido_costas(ind):
+    """¿En qué comisión deja de ser rentable la estrategia?"""
+    print(f"\n  BARRIDO DE COSTES (la ventaja es pequeña: los costes importan)")
+    print(f"  {'fee/lado':>9s} {'coste/trade':>12s} {'retorno':>10s} {'pnl':>12s}")
+    for fee in (0.0, 0.0005, 0.001, 0.002, 0.005, 0.01):
+        o, e, d = simular(ind, fee=fee)
+        m = metricas(o, e, d)
+        if m.get("trades", 0) == 0:
+            continue
+        print(f"  {fee:8.4%} {2 * fee:11.4%} {m['retorno_total']:+9.2%} {m['final_equity'] - 100_000:>+11,.0f}")
+    be = breakeven_fee(ind)
+    if be == 0.0:
+        print("  → Nunca es rentable: ni con comisión cero el retorno bruto es positivo.")
+    else:
+        print(f"  → Punto de equilibrio: {be:.4%} por lado ({2 * be:.4%} por trade).")
+        print(f"    Por debajo de eso la estrategia gana; por encima, pierde dinero.")
+
+
+def por_ano(ind, fee=FEE_POR_LADO):
+    """El edge, ¿es consistente cada año o está concentrado en unos pocos?"""
+    print(f"\n  DESGLOSE POR AÑO (indicadores calculados sobre toda la historia)")
+    print(f"  {'año':>6s} {'ops':>5s} {'retorno':>10s} {'win':>7s} {'payoff':>7s}")
+    for año in sorted(set(ind.index.year)):
+        sub = ind[ind.index.year == año]
+        if len(sub) < 30:
+            continue
+        o, e, d = simular(sub, fee=fee)
+        m = metricas(o, e, d)
+        if m.get("trades", 0) == 0:
+            print(f"  {año:6d} {0:5d}   sin operaciones")
+            continue
+        print(f"  {año:6d} {m['trades']:5d} {m['retorno_total']:+9.2%} {m['win_rate']:6.1%} {m['payoff']:6.2f}x")
+
+
+def run_ticker(ticker, fee=FEE_POR_LADO, mom=MOM_PCT, ema=EMA_SPAN, simulaciones=2000,
+               periodo="max", analisis_extra=True):
     print(f"\n{'=' * 78}\n{ticker}   EMA{ema} / momentum ±{mom}% / "
           f"fee {fee:.3%} por lado / riesgo {RIESGO_PCT:.1%} / lev {APALANCAMIENTO_MAX}x\n{'=' * 78}")
-    df = descargar(ticker)
+    df = descargar(ticker, periodo)
     ind = indicadores(df, ema, mom)
-    print(f"  datos: {ind.index[0].date()} -> {ind.index[-1].date()}  ({len(ind)} velas)")
+    print(f"  datos: {ind.index[0].date()} -> {ind.index[-1].date()}  ({len(ind)} velas, period={periodo})")
 
     ops, equity, dd = simular(ind, fee=fee)
     m = metricas(ops, equity, dd)
@@ -246,6 +322,28 @@ def run_ticker(ticker, fee=FEE_POR_LADO, mom=MOM_PCT, ema=EMA_SPAN, simulaciones
         o, e, d = simular(sub, fee=fee)
         print(linea(etiqueta, metricas(o, e, d)))
 
+    if analisis_extra and not ops.empty:
+        sig = significatividad(ops)
+        if sig:
+            print(f"\n  SIGNIFICATIVIDAD (bootstrap 10.000, sobre {sig['n']} operaciones)")
+            print(f"    retorno medio por trade : {sig['media']:+.4%}")
+            print(f"    IC 95% del retorno medio: [{sig['ic'][0]:+.4%}, {sig['ic'][1]:+.4%}]")
+            print(f"    t-estadístico          : {sig['t']:+.2f}")
+            print(f"    autocorrelación lag-1  : {sig['ac1']:+.3f}  "
+                  f"({'los trades NO son independientes' if abs(sig['ac1']) > 0.1 else 'casi independientes'})")
+            print(f"    peso de las 5 mejores   : {sig['share_top5']:.0%} del retorno total")
+            if sig["ic"][0] <= 0 <= sig["ic"][1]:
+                print("    → El IC 95% incluye el cero: no se puede rechazar que el retorno")
+                print("      medio sea nulo. La ventaja no es estadísticamente significante.")
+            elif sig["t"] < 2:
+                print("    → IC por encima de cero pero |t| < 2: evidencia débil.")
+            else:
+                print("    → IC excluye el cero y |t| > 2: diferencia significativa,")
+                print("      sujeta a la cautela por la autocorrelación de los trades.")
+
+        por_ano(ind)
+        barrido_costas(ind)
+
     return ind, m
 
 
@@ -254,7 +352,7 @@ def sensibilidad(ticker):
     print(f"\n{'=' * 78}\nSENSIBILIDAD DE PARÁMETROS — {ticker}\n{'=' * 78}")
     print("  Un edge real se mantiene al mover los parámetros. Si solo gana en un")
     print("  punto exacto, es sobreajuste (curve fitting), no una ventaja.\n")
-    df = descargar(ticker)
+    df = descargar(ticker, "max")
     filas = []
     print(f"  {'EMA':>5s} {'mom':>5s} | {'trades':>7s} {'retorno':>10s} {'dd_max':>8s} {'payoff':>7s}")
     for ema in (20, 50, 100):
@@ -289,6 +387,9 @@ if __name__ == "__main__":
     ap.add_argument("--fee", type=float, default=FEE_POR_LADO)
     ap.add_argument("--simulaciones", type=int, default=2000,
                     help="réplicas del baseline aleatorio")
+    ap.add_argument("--period", default="max", help="max | 10y | 5y | 2y")
+    ap.add_argument("--rapido", action="store_true",
+                    help="omite significatividad, desglose anual y barrido de costes")
     ap.add_argument("--sensibilidad", action="store_true", help="barrido de parámetros")
     args = ap.parse_args()
 
@@ -299,7 +400,7 @@ if __name__ == "__main__":
     print("Sin stop loss: el riesgo nominal NO acota la pérdida por trade.")
 
     for t in tickers:
-        run_ticker(t, fee=args.fee, simulaciones=args.simulaciones)
+        run_ticker(t, fee=args.fee, simulaciones=args.simulaciones, periodo=args.period, analisis_extra=not args.rapido)
 
     if args.sensibilidad:
         for t in tickers:
