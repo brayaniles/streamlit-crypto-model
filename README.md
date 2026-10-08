@@ -10,35 +10,53 @@ dimensionamiento por ATR y contrastar un modelo LSTM contra un baseline naive.
 
 ## ⚠️ Estado real del proyecto (léelo antes que nada)
 
-Este repositorio **no contiene un backtest de las reglas de trading**. Una versión
-anterior de la app mostraba una tabla de Win Rate, Payoff, Drawdown Máximo y Factor de
-Recuperación con cifras escritas a mano que el código nunca calculaba, seguida de un
-dictamen de "robustez matemática impecable". Ese contenido se ha retirado porque era
-inventado.
-
-Lo que sí está medido automáticamente, y por tanto es reproducible:
+Una versión anterior de esta app mostraba una tabla de Win Rate, Payoff, Drawdown Máximo y
+Factor de Recuperación con cifras escritas a mano que el código nunca calculaba, seguida de
+un dictamen de "robustez matemática impecable". Ese contenido se ha retirado y sustituido por
+mediciones reales.
 
 | Qué | Cómo | Resultado |
 |---|---|---|
-| Dimensionamiento por ATR | Aritmética en la pestaña 5 | Verificado |
-| Baseline naive vs modelo de precio | `validate.py` | El modelo **pierde** |
-| LSTM vs baseline naive | Pestaña 2 de la app | El LSTM **pierde** |
+| Reglas de entrada/salida | `backtest.py` y pestaña 3 | **Edge en BTC, no en ETH ni SOL** |
+| Predicción del nivel de precio (LSTM) | `validate.py` y pestaña 2 | **No supera al naive** |
 
-Resultado medido con `validate.py BTC-USD` (último año fuera de muestra, walk-forward):
+### Las reglas de trading: funciona en BTC, falla en ETH y SOL
+
+`backtest.py` simula las reglas exactas de la app (señal sobre el cierre de T, entrada al
+`Open[T+1]`, salida a `Close[T+1]`, dimensionado por ATR, 5 bps de coste por lado) y las
+compara contra **entradas aleatorias con el mismo número de operaciones y el mismo tamaño de
+posición** — la única forma de saber si el resultado viene de las reglas o solo del
+dimensionamiento.
+
+| Activo | Retorno | DD máx | Ops | Win | Payoff | Percentil vs. azar | Config. positivas |
+|---|---|---|---|---|---|---|---|
+| BTC-USD | **+11.3%** | 2.17% | 189 | 59.3% | 1.12 | **99.6%** | 9/9 |
+| ETH-USD | −7.1% | 12.03% | 277 | 52.7% | 0.73 | 28.1% | 3/9 |
+| SOL-USD | −7.6% | 8.99% | 383 | 48.8% | 0.90 | 30.0% | 0/9 |
+
+**BTC** supera al azar por margen amplio y gana en las 9 combinaciones de parámetros
+(EMA 20/50/100 × momentum ±2/3/4%): no es curve fitting. Su weakness es el retorno
+absoluto — un +2.2% de CAGR frente al +5.7% de buy & hold, aunque con un 2.17% de drawdown
+contra el 76.63%. **ETH y SOL pierden dinero y quedan por debajo de la mediana aleatoria**:
+en esos activos las reglas no aportan nada.
+
+Faltaría replicar el análisis por años y aumentar la muestra para ETH/SOL antes de
+concluir nada; 5 años y ~300 operaciones dan poco poder estadístico.
+
+### La predicción de precio no tiene edge
 
 ```
+python validate.py BTC-USD
 modelo            MAE    MAE %
-modelo        21132.1   26.71%
-naive          1295.0    1.64%   <- "mañana = hoy"
-ma5            1995.1    2.52%
+modelo        21132.3   26.71%
+naive          1294.9    1.64%   <- "mañana = hoy"
+ma5            1994.9    2.52%
+VEREDICTO: el modelo NO supera al baseline naive (21132 vs 1295).
 ```
 
-Un modelo lineal sobre features de precio es ~16x peor que decir "mañana valdrá lo
-mismo que hoy". **No hay edge en la predicción del nivel del precio.** El módulo LSTM
-de la pestaña 2 hace la misma comprobación y avisa cuando no supera al baseline.
-
-En consecuencia: la app sirve para estudiar la **aritmética de gestión de riesgo** y para
-**desmontar la premisa de predicción de precio**, no para operar.
+Un modelo lineal sobre features de precio es ~16x peor que decir "mañana valdrá lo mismo que
+hoy". El LSTM de la pestaña 2 hace la misma comprobación y avisa cuando no supera al
+baseline.
 
 ---
 
@@ -112,6 +130,19 @@ python validate.py BTC-USD   # o ETH-USD, SOL-USD
 
 Walk-forward: reentrena cada 30 días sobre el último año y compara Ridge contra los dos
 baselines. No necesita TensorFlow, así que corre en segundos.
+
+### Backtest de las reglas de trading
+
+```bash
+python backtest.py                                  # los tres activos
+python backtest.py BTC-USD --sensibilidad           # barrido EMA 20/50/100 x momentum ±2/3/4%
+python backtest.py ETH-USD --fee 0.001              # con otros costes
+```
+
+Sin lookahead: la señal se evalúa sobre el cierre de T y se ejecuta al `Open[T+1]`, con
+salida a `Close[T+1]`. Incluye el baseline aleatorio (2.000 réplicas por defecto; ajustable
+con `--simulaciones`), que es la comparación que realmente importa. La pestaña 3 de la app
+Ejecuta este mismo backtest al vuelo sobre el activo que selecciones.
 
 ### Tests
 

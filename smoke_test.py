@@ -42,8 +42,11 @@ todo = " ".join(
 for marcador in ["$9,997.95", "$2,890.95", "56.28%", "2.26", "robustez matemática impecable",
                  "Búfer QuantumTradeA", "inmunidad defensiva total", "binance.com"]:
     check(marcador not in todo, f"no aparece la cifra/texto fabricado: {marcador!r}")
-check("No existe un backtest" in todo, "la pestaña 3 declara que no hay backtest")
-check("validate.py" in todo, "la pestaña 3 remite a validate.py")
+# La pestaña 3 ya no declara que falte el backtest: ahora lo ejecuta y calcula.
+check("No existe un backtest" not in todo, "la pestaña 3 ya no afirma que falte el backtest")
+check("No hay cifras escritas a mano" in todo, "la pestaña 3 declara que las cifras se calculan")
+check("validate.py" in todo, "se menciona validate.py")
+check("naive" in todo.lower(), "se documenta el contraste contra el baseline naive")
 
 print("\n4) Etiqueta de vela en curso")
 check(any("en curso" in w.value for w in at.warning), "avisa que la última vela está en curso")
@@ -87,7 +90,26 @@ if btn:
         coherente = (mae_l > mae_n) == ("no supera" in warns)
         check(coherente, f"veredicto coherente con las cifras: LSTM={mae_l:,.0f} naive={mae_n:,.0f}")
 
-print("\n6) Aritmetica de dimensionamiento por ATR (recalculo independiente)")
+print("\n6) Backtest real de las reglas (pestaña 3, calculado al vuelo)")
+btn_bt = [b for b in at.button if "backtest" in b.label.lower()]
+check(len(btn_bt) == 1, f"se localiza el boton de backtest: {[b.label for b in at.button]}")
+if btn_bt:
+    at3 = at
+    at3.button[[b.label for b in at3.button].index(btn_bt[0].label)].click().run(timeout=1800)
+    check(not at3.exception, f"sin excepciones tras el backtest ({[str(e)[:200] for e in at3.exception]})")
+    errs = [e.value for e in at3.error]
+    check(not any("No se pudo ejecutar" in e for e in errs), f"el backtest se ejecuto: {errs}")
+    labels = [m.label for m in at3.metric]
+    for esperado in ("Retorno Sentinel V10", "Drawdown máximo", "Operaciones", "Win rate",
+                     "Payoff medio", "Profit factor", "Recovery factor"):
+        check(any(esperado in l for l in labels), f"metrica presente: {esperado}")
+    subs = [s.value for s in at3.subheader]
+    check(any("Backtest Real" in s for s in subs), f"subheader del backtest: {subs}")
+    # La ventana de out-of-sample debe aparecer con sus dos mitades.
+    txt = " ".join(m.value for m in at3.markdown)
+    check("In-sample" in txt and "Out-of-sample" in txt, "muestra el split in/out-of-sample")
+
+print("\n7) Aritmetica de dimensionamiento por ATR (recalculo independiente)")
 import numpy as np
 atr, precio, capital, riesgo = 2000.0, 100000.0, 100000.0, 0.5
 esperado = min((capital * riesgo / 100) / (atr / precio), capital * 2.0)

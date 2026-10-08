@@ -79,6 +79,48 @@ def load_data_v10(ticker, days):
     except Exception as exc:
         return pd.DataFrame(), f"{type(exc).__name__}: {exc}"
 
+
+import backtest as bt
+
+
+def _f(x):
+    """Convierte tipos numpy a float de Python (st.cache_data y st.metric los exigen)."""
+    return float(x) if x is not None and np.isfinite(x) else None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def ejecutar_backtest(ticker, simulaciones=1000):
+    """Ejecuta el backtest real de las reglas y devuelve las métricas ya calculadas."""
+    ind = bt.indicadores(bt.descargar(ticker))
+    ops, equity, dd = bt.simular(ind)
+    m = bt.metricas(ops, equity, dd)
+    bh = bt.baseline_buy_hold(ind)
+
+    corte = ind.index[len(ind) // 2]
+    mis_ops, mis_eq, mis_dd = bt.simular(ind[ind.index <= corte])
+    mos_ops, mos_eq, mos_dd = bt.simular(ind[ind.index > corte])
+    mis = bt.metricas(mis_ops, mis_eq, mis_dd)
+    mos = bt.metricas(mos_ops, mos_eq, mos_dd)
+
+    ale = bt.baseline_aleatorio(ind, m["trades"], repeticiones=simulaciones)
+    pct = float((ale < ops["pnl"].sum()).mean()) if ale is not None else float("nan")
+    ale_med = float(np.median(ale)) if ale is not None else 0.0
+
+    def limpiar(d, extra=None):
+        out = {k: _f(v) for k, v in d.items() if k not in ("trades",)}
+        out["trades"] = int(d.get("trades", 0))
+        if extra:
+            out.update(extra)
+        return out
+
+    return (
+        limpiar(m, {"n_velas": len(ind), "rango": (str(ind.index[0].date()), str(ind.index[-1].date()))}),
+        limpiar(bh),
+        str(corte.date()),
+        limpiar(mis), limpiar(mos),
+        pct, ale_med,
+    )
+
 # --- INTERFAZ LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.header("⚙️ Panel de Control")
@@ -328,33 +370,90 @@ else:
                 st.table(pred_df.style.format({"Precio Est.": "${:,.2f}"}))
                 st.success("✅ Red Neuronal Predictiva entrenada y proyección generada.")
 
-    # --- PESTAÑA 3: REGISTRO DE VALIDACIÓN ---
+# --- PESTAÑA 3: BACKTEST REAL DE LAS REGLAS (CALCULADO AL VUELO) ---
     with tab3:
-        st.subheader("🎯 Estado Real de la Validación")
-        st.error(
-            "⚠️ **No existe un backtest de las reglas de trading Sentinel V10 en este repositorio.** "
-            "Las versiones anteriores de esta app mostraban una tabla de Win Rate, Payoff, Drawdown y "
-            "Factor de Recuperación con cifras escritas a mano que el código nunca calculaba, "
-            "acompañadas de un dictamen de \"robustez impecable\". Se ha retirado."
-        )
-        st.markdown("**Lo que sí está medido automáticamente:**")
-        st.code("python validate.py BTC-USD", language="bash")
+        st.subheader("🎯 Backtest Real de las Reglas Sentinel V10")
+        st.caption("Las métricas se calculan ejecutando `backtest.py` sobre datos de yfinance. "
+                   "No hay cifras escritas a mano en esta pestaña.")
         st.markdown(
-            "`validate.py` hace walk-forward sobre el último año: reentrena un Ridge cada 30 días "
-            "con features de retorno, RSI, distancia a EMA20 y volatilidad, y lo compara contra dos "
-            "baselines (`mañana = hoy` y MA5). Reporta MAE absoluto y porcentual, acierto direccional "
-            "y un veredicto explícito."
+            "Las versiones anteriores mostraban aquí una tabla de Win Rate, Payoff, Drawdown y "
+            "Factor de Recuperación con números inventados y un dictamen de *robustez impecable*. "
+            "Se sustituyó por una simulación real de las reglas: entrada al día siguiente a la "
+            "señal, salida a las 24 h, dimensionamiento por ATR y costes de comisión."
         )
+
+        if st.button("🧪 Ejecutar backtest sobre el activo seleccionado", key="btn_backtest"):
+            with st.spinner(f"Simulando las reglas Sentinel V10 sobre {crypto}..."):
+                try:
+                    bt = ejecutar_backtest(crypto)
+                    error_bt = None
+                except Exception as exc:
+                    bt, error_bt = None, f"{type(exc).__name__}: {exc}"
+
+            if error_bt:
+                st.error(f"No se pudo ejecutar el backtest: {error_bt}")
+            else:
+                m, bh, corte, mis, mos, pct, ale_med = bt
+                st.success(f"Backtest completado sobre {m['n_velas']} velas "
+                           f"({m['rango'][0]} → {m['rango'][1]}).")
+
+                st.markdown("#### Estrategia frente a buy & hold")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Retorno Sentinel V10", f"{m['retorno_total']:+.2%}")
+                c2.metric("Drawdown máximo", f"{m['dd_max']:.2%}")
+                c3.metric("Retorno buy & hold", f"{bh['retorno_total']:+.2%}")
+                c4.metric("Drawdown buy & hold", f"{bh['dd_max']:.2%}")
+
+                st.markdown("#### Métricas de la estrategia")
+                d1, d2, d3 = st.columns(3)
+                d1.metric("Operaciones", f"{m['trades']}")
+                d2.metric("Win rate", f"{m['win_rate']:.2%}")
+                d3.metric("Payoff medio", f"{m['payoff']:.2f}x")
+                d4, d5, d6 = st.columns(3)
+                d4.metric("Profit factor", f"{m['profit_factor']:.2f}")
+                d5.metric("CAGR", f"{m['cagr']:+.2%}")
+                d6.metric("Recovery factor", f"{m['recovery_factor']:.2f}")
+
+                st.markdown(f"#### Split cronológico (corte en {corte})")
+                e1, e2 = st.columns(2)
+                e1.markdown(f"**In-sample** — {mis['trades']} operaciones · win {mis['win_rate']:.1%} · "
+                            f"retorno {mis['retorno_total']:+.2%} · dd {mis['dd_max']:.2%}")
+                e2.markdown(f"**Out-of-sample** — {mos['trades']} operaciones · win {mos['win_rate']:.1%} · "
+                            f"retorno {mos['retorno_total']:+.2%} · dd {mos['dd_max']:.2%}")
+
+                st.markdown("#### ¿Las reglas aportan valor o solo el dimensionamiento?")
+                st.caption("Comparación contra entradas elegidas al azar con el mismo número de "
+                           "operaciones y el mismo tamaño de posición.")
+                if pct >= 0.95:
+                    st.success(f"La estrategia queda en el **percentil {pct:.1%}** frente a entradas "
+                               f"aleatorias (pnl mediano ${ale_med:,.0f}). Las reglas aportan valor.")
+                elif pct >= 0.80:
+                    st.warning(f"La estrategia queda en el percentil {pct:.1%} frente a entradas "
+                               f"aleatorias (pnl mediano ${ale_med:,.0f}). Evidencia débil.")
+                else:
+                    st.error(f"La estrategia queda en el **percentil {pct:.1%}**, por debajo de la "
+                             f"mediana aleatoria (${ale_med:,.0f}). En este activo las reglas no "
+                             "superan al azar: el resultado se explica por el dimensionamiento, "
+                             "no por EMA + momentum.")
+
+                if mos["retorno_total"] <= 0:
+                    st.error(f"Fuera de muestra el retorno es {mos['retorno_total']:+.2%}: negativo.")
+                elif mos["retorno_total"] < mis["retorno_total"] * 0.5:
+                    st.warning(f"Degradación marcada entre in-sample ({mis['retorno_total']:+.2%}) y "
+                               f"out-of-sample ({mos['retorno_total']:+.2%}): síntoma de ajuste a la "
+                               "muestra histórica. Trátalo con escepticismo.")
+
+        st.markdown("---")
+        st.markdown("#### Sobre la predicción de precio (modelo LSTM)")
         st.markdown(
-            "**Resultado medido en BTC-USD (último año OOS): el modelo no supera al baseline "
-            "`mañana = hoy`.** Un modelo lineal sobrefeatures de precio no aporta edge para predecir "
-            "el nivel del cierre, y el mismo mecanismo aplica al LSTM de la pestaña anterior. "
-            "Ejecuta `validate.py` para reproducir los números actuales."
+            "El módulo LSTM de la pestaña 2 **no supera** al baseline `mañana = hoy` "
+            "(MAE medido en BTC-USD: LSTM $3.204 frente a naive $1.156). "
+            "Reproducible con `python validate.py BTC-USD`."
         )
         st.info(
-            "💡 Conclusión honesta: lo que sí es medible en este repositorio es el **dimensionamiento "
-            "por ATR** de la pestaña 5 (aritmética verificada). Lo que **no** es medible todavía es "
-            "la ventaja de las reglas de entrada/salida, porque nadie ha escrito ese backtest."
+            "💡 Lectura honesta: el backtest de arriba mide las **reglas de entrada y salida**, y "
+            "sus cifras están calculadas. La predicción del nivel de precio con LSTM **no** tiene "
+            "respaldo medible. Son dos cosas distintas y conviene no mezclarlas."
         )
 
               # --- PESTAÑA 4: NOTICIAS (FEEDS RSS REALES, SIN CONTENIDO FABRICADO) ---
