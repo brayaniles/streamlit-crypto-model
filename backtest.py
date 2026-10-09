@@ -37,12 +37,27 @@ APALANCAMIENTO_MAX = 2.0
 EMA_SPAN = 50
 MOM_PCT = 3.0
 
+# Slippage. Con un edge de unos pocos bps, esto decide si la estrategia existe.
+SPREAD_BPS = 2.0              # medio spread que se cruza en cada lado
+IMPACTO_BPS_POR_SQRT_PART = 50.0  # coef. de la ley raíz: bps = coef * sqrt(participación)
 
-def descargar(ticker, periodo="max"):
+
+def descargar(ticker, periodo="max", solo_cerradas=True):
+    """Descarga OHLCV.
+
+    Por defecto descarta la última vela si su fecha es hoy (UTC): yfinance la devuelve
+    incompleta y hace que los resultados cambien intradía. Un backtest debe usar solo
+    velas cerradas para ser reproducible.
+    """
     df = yf.download(ticker, period=periodo, progress=False, auto_adjust=True)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
-    return df.dropna()
+    df = df.dropna()
+    if solo_cerradas and len(df):
+        hoy = pd.Timestamp.now(tz=df.index.tz).normalize() if df.index.tz else pd.Timestamp.now().normalize()
+        if df.index[-1] >= hoy:
+            df = df.iloc[:-1]
+    return df
 
 
 def indicadores(df, ema_span=EMA_SPAN, mom_pct=MOM_PCT):
@@ -56,6 +71,9 @@ def indicadores(df, ema_span=EMA_SPAN, mom_pct=MOM_PCT):
         (out["Low"] - prev_close).abs(),
     ], axis=1).max(axis=1)
     out["atr"] = tr.rolling(14).mean()
+    # Volumen Advanced Daily en USD, para estimar el impacto de mercado.
+    adv_usd = (out["Volume"].rolling(30).mean() * out["Close"]).shift(1)
+    out["adv_usd"] = adv_usd
     return out.dropna()
 
 
@@ -69,11 +87,14 @@ def senales(ind, mom_pct=MOM_PCT):
 
 def simular(ind, fee=FEE_POR_LADO, riesgo_pct=RIESGO_PCT,
             apalancamiento=APALANCAMIENTO_MAX, capital_inicial=100_000.0,
-            senal=None, rng=None):
+            senal=None, rng=None, slippage=True):
     """Itera sobre las velas. Sin lookahead: la señal de T se ejecuta en T+1.
 
     `senal` permite inyectar una serie de señales alternativa (para los baselines
     aleatorios). Si es None se usan las reglas de la estrategia.
+
+    Con `slippage=True` el coste no es una comisión plana sino medio spread más
+    impacto de mercado por la ley raíz sobre la participación diaria (nocional/ADV).
     """
     if senal is None:
         senal = senales(ind)
@@ -101,8 +122,17 @@ def simular(ind, fee=FEE_POR_LADO, riesgo_pct=RIESGO_PCT,
         nocional = (capital * riesgo_pct) / (atr / px_entrada)
         nocional = min(nocional, apalancamiento * capital)
 
+        # Coste real de ejecución.
+        coste = 2 * fee
+        adv = float(ind["adv_usd"].loc[f_salida]) if "adv_usd" in ind else np.nan
+        participacion = np.nan
+        if slippage and np.isfinite(adv) and adv > 0:
+            participacion = nocional / adv
+            impacto = IMPACTO_BPS_POR_SQRT_PART * np.sqrt(participacion) / 10_000
+            coste += 2 * (SPREAD_BPS / 10_000 + impacto)
+
         bruto = px_salida / px_entrada - 1
-        neto = (bruto if lado == 1 else -bruto) - 2 * fee    # entrada y salida
+        neto = (bruto if lado == 1 else -bruto) - coste
         pnl = nocional * neto
         # Sin stop loss: si la pérdida supera el patrimonio, es liquidación total.
         pnl = max(pnl, -capital)
@@ -114,7 +144,8 @@ def simular(ind, fee=FEE_POR_LADO, riesgo_pct=RIESGO_PCT,
         operaciones.append({
             "entrada": f_entrada, "salida": f_entrada, "lado": lado,
             "px_entrada": px_entrada, "px_salida": px_salida,
-            "ret_neto": neto, "nocional": nocional, "pnl": pnl,
+            "ret_neto": neto, "coste": coste, "nocional": nocional, "pnl": pnl,
+            "participacion": participacion,
             "equity": capital,
         })
 
@@ -272,6 +303,107 @@ def por_ano(ind, fee=FEE_POR_LADO):
         print(f"  {año:6d} {m['trades']:5d} {m['retorno_total']:+9.2%} {m['win_rate']:6.1%} {m['payoff']:6.2f}x")
 
 
+def walk_forward(ticker, folds=6, fee=FEE_POR_LADO, df=None,
+                 grid_ema=(20, 30, 50, 75, 100), grid_mom=(2.0, 3.0, 4.0, 5.0)):
+    """Walk-forward con reoptimización de parámetros.
+
+    En cada fold se elige el par (EMA, momentum) que mejor funcionó en TODOS los datos
+    anteriores al fold, y se aplica ese par al fold sin volver a mirar atrás. Es la
+    única forma de evaluar el *proceso* de elegir parámetros, no un par elegido a
+    posteriori.
+
+    Si el OOS de este procedimiento no supera al azar, elegir parámetros no aporta nada.
+    """
+    if df is None:
+        df = descargar(ticker, "max")
+    n = len(df)
+    # Fold inicial del 25% para tener historia con la que elegir.
+    ini_test = int(n * 0.25)
+    paso = (n - ini_test) // folds
+    if paso < 60:
+        print("  (historia insuficiente para walk-forward)")
+        return None
+
+    cache = {}
+
+    def rend(ind_sub, ema, mom):
+        k = (id(ind_sub), ema, mom)
+        if k in cache:
+            return cache[k]
+        o, e, _ = simular(ind_sub, fee=fee)
+        m = metricas(o, e, _)
+        v = m.get("retorno_total", -1.0) if m.get("trades", 0) else -1.0
+        cache[k] = v
+        return v
+
+    print(f"\n  WALK-FORWARD CON REOPTIMIZACIÓN ({folds} folds)")
+    print(f"  grid: EMA{list(grid_ema)} x mom{list(grid_mom)}")
+    print(f"  {'fold':>16s} {'params elegidas':>18s} {'ret train':>11s} {'ret test':>10s} {'ops':>5s}")
+
+    resultados = []
+    capital = 100_000.0
+    pnl_folds = []
+    ini_oos = []          # fechas de inicio de cada fold, para verificar no solapan
+    for k in range(folds):
+        fin_train = ini_test + k * paso
+        fin_test = min(fin_train + paso, n)
+        if fin_test - fin_train < 30:
+            continue
+        ind_train = indicadores(df.iloc[:fin_train])
+        # Warmup para que los indicadores tengan historia, PERO las operaciones solo
+        # pueden empezar en la frontera del fold. Sin este recorte, las barras de
+        # warmup son datos in-sample y se contabilizarían como out-of-sample.
+        ind_ext = indicadores(df.iloc[max(fin_train - 100, 0):fin_test])
+        fecha_fold = df.index[fin_train]
+        ind_test = ind_ext[ind_ext.index >= fecha_fold]
+        if len(ind_train) < 200 or len(ind_test) < 30:
+            continue
+        ini_oos.append(ind_test.index[0])
+        # Elegir con el train, aplicar al test.
+        mejor, mejor_r = None, -np.inf
+        for ema in grid_ema:
+            for mom in grid_mom:
+                r = rend(ind_train, ema, mom)
+                if r > mejor_r:
+                    mejor_r, mejor = r, (ema, mom)
+        o, e, d = simular(ind_test, fee=fee)
+        m = metricas(o, e, d)
+        rt = m.get("retorno_total", 0.0) if m.get("trades", 0) else 0.0
+        capital *= (1 + rt)
+        pnl_folds.append(float(o["pnl"].sum()) if m.get("trades", 0) else 0.0)
+        ini_f = str(ind_test.index[0].date())
+        fin_f = str(ind_test.index[-1].date())
+        print(f"  {ini_f}→{fin_f} {f'EMA{mejor[0]} / ±{mejor[1]}%':>18s} "
+              f"{mejor_r:+10.2%} {rt:+9.2%} {m.get('trades', 0):5d}")
+        resultados.append({"ema": mejor[0], "mom": mejor[1], "train": mejor_r, "test": rt})
+
+    if not resultados:
+        return None
+
+    total = capital / 100_000.0 - 1
+    ems = [r["ema"] for r in resultados]
+    mms = [r["mom"] for r in resultados]
+    # Verificación explícita de que las ventanas OOS no se solapan.
+    solapan = any(ini_oos[i] > fin for i, fin in enumerate(ini_oos[1:]))
+    print(f"\n    Equity acumulado del walk-forward: {total:+.2%}")
+    print(f"    Ventanas OOS solapadas: {'SI — BUG' if solapan else 'no (verificado)'}")
+    print(f"    Parámetros elegidos: EMA {ems}")
+    print(f"                        momentum {mms}")
+    n_ema, n_mom = len(set(ems)), len(set(mms))
+    print(f"    Estabilidad: {n_ema} EMA distintas, {n_mom} umbrales de momentum distintos "
+          f"en {len(resultados)} folds")
+    positivos = sum(1 for r in resultados if r["test"] > 0)
+    print(f"    Folds con retorno positivo: {positivos}/{len(resultados)}")
+    if total <= 0 or positivos * 2 <= len(resultados):
+        print("    → El procedimiento de elegir parámetros NO genera valor: la eleccion")
+        print("      de parámetros es ruido, no una ventaja.")
+    else:
+        print("    → El procedimiento produce valor, pero revisa que la eleccion de")
+        print("      parámetros sea estable (pocos valores distintos) antes de creértelo.")
+    return {"total": total, "resultados": resultados,
+            "pnl_folds": pnl_folds, "ema_distintas": n_ema, "mom_distintas": n_mom}
+
+
 def run_ticker(ticker, fee=FEE_POR_LADO, mom=MOM_PCT, ema=EMA_SPAN, simulaciones=2000,
                periodo="max", analisis_extra=True):
     print(f"\n{'=' * 78}\n{ticker}   EMA{ema} / momentum ±{mom}% / "
@@ -322,6 +454,19 @@ def run_ticker(ticker, fee=FEE_POR_LADO, mom=MOM_PCT, ema=EMA_SPAN, simulaciones
         o, e, d = simular(sub, fee=fee)
         print(linea(etiqueta, metricas(o, e, d)))
 
+    if not ops.empty and "participacion" in ops:
+        part = ops["participacion"].replace([np.inf, -np.inf], np.nan).dropna()
+        coste_medio = float(ops["coste"].mean())
+        print(f"\n  COSTES REALES Y PARTICIPACIÓN")
+        print(f"    commission        : {2 * fee:.3%} por operación")
+        print(f"    coste medio real  : {coste_medio:.3%} por operación "
+              f"(spread {SPREAD_BPS:.0f} bps/lado + impacto)")
+        if len(part):
+            print(f"    participación ADV : mediana {part.median():.6%} | máximo {part.max():.6%}")
+            if part.median() < 1e-4:
+                print("    → Participación minúscula: el impacto es despreciable y lo que")
+                print("      cuesta dinero es la comisión y el spread, no el tamaño de la orden.")
+
     if analisis_extra and not ops.empty:
         sig = significatividad(ops)
         if sig:
@@ -343,6 +488,15 @@ def run_ticker(ticker, fee=FEE_POR_LADO, mom=MOM_PCT, ema=EMA_SPAN, simulaciones
 
         por_ano(ind)
         barrido_costas(ind)
+        wf = walk_forward(ticker, fee=fee, df=df)
+        if wf:
+            ale = baseline_aleatorio(ind, len(ops), fee=fee, repeticiones=400)
+            if ale is not None:
+                p_wf = float((ale < sum(wf["pnl_folds"])).mean())
+                print(f"    Percentil del walk-forward entre entradas aleatorias: {p_wf:.1%}")
+                if p_wf < 0.80:
+                    print("    → El proceso completo (elegir parámetros y operar) tampoco")
+                    print("      supera al azar de forma convincente.")
 
     return ind, m
 

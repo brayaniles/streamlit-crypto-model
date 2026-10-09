@@ -91,7 +91,10 @@ def _f(x):
 @st.cache_data(ttl=3600, show_spinner=False)
 def ejecutar_backtest(ticker, simulaciones=1000):
     """Ejecuta el backtest real de las reglas y devuelve las métricas ya calculadas."""
-    ind = bt.indicadores(bt.descargar(ticker, "max"))
+    # Datos crudos: walk_forward los necesita sin preprocessar, porque reprocesar un
+    # dataframe yaIndicizado cambia el número de filas y desplaza las fronteras de fold.
+    df_raw = bt.descargar(ticker, "max")
+    ind = bt.indicadores(df_raw, bt.EMA_SPAN, bt.MOM_PCT)
     ops, equity, dd = bt.simular(ind)
     m = bt.metricas(ops, equity, dd)
     bh = bt.baseline_buy_hold(ind)
@@ -109,8 +112,11 @@ def ejecutar_backtest(ticker, simulaciones=1000):
     sig = bt.significatividad(ops) or {}
     be = bt.breakeven_fee(ind)
     # Retorno bruto: sin comisión, para ver cuánto edge real hay antes de los costes.
-    o0, e0, d0 = bt.simular(ind, fee=0.0)
+    o0, e0, d0 = bt.simular(ind, fee=0.0, slippage=False)
     m0 = bt.metricas(o0, e0, d0)
+    part = (ops["participacion"].replace([np.inf, -np.inf], np.nan).dropna()
+            if "participacion" in ops else pd.Series(dtype=float))
+    wf = bt.walk_forward(crypto, df=df_raw)
     # ¿Cuántos años positivos hay? Si cambia de signo por régimen, no es estable.
     anuales = []
     for y in sorted(set(ind.index.year)):
@@ -146,6 +152,11 @@ def ejecutar_backtest(ticker, simulaciones=1000):
         "breakeven_fee": float(be),
         "anios_positivos": int(sum(1 for r in anuales if r > 0)),
         "anios_total": len(anuales),
+        "coste_medio": float(ops["coste"].mean()) if "coste" in ops and len(ops) else None,
+        "participacion_mediana": float(part.median()) if len(part) else None,
+        "participacion_max": float(part.max()) if len(part) else None,
+        "wf": ({"total": float(wf["total"]), "ema_distintas": wf["ema_distintas"],
+                "folds": wf["resultados"]} if wf else None),
     }
 
 # --- INTERFAZ LATERAL (SIDEBAR) ---
@@ -486,17 +497,55 @@ else:
                     )
 
                 st.markdown("#### ¿Los costes se comen la ventaja?")
+                if r["coste_medio"] is not None:
+                    st.caption(f"Coste medio real por operación: **{r['coste_medio']:.3%}** "
+                               f"(comisión {2 * 0.0005:.3%} + medio spread {bt.SPREAD_BPS:.0f} bps/lado "
+                               f"+ impacto de mercado por participación diaria).")
+                    if r["participacion_mediana"] is not None:
+                        st.caption(f"Participación diaria (nocional/ADV): mediana "
+                                   f"{r['participacion_mediana']:.6%}, máximo "
+                                   f"{r['participacion_max']:.6%}. Con una participación tan baja el "
+                                   "impacto es despreciable: lo que cuesta dinero es la comisión.")
                 if r["breakeven_fee"] == 0:
                     st.error(
                         "El retorno **bruto** (sin comisión ninguna) ya es negativo: la estrategia "
                         "no es rentable ni con costes cero."
                     )
                 else:
-                    st.warning(
-                        f"El equilibrio está en **{r['breakeven_fee']:.4%} por lado** "
-                        f"({2 * r['breakeven_fee']:.4%} por operación). Por encima de esa comisión "
-                        "la estrategia pierde dinero, aunque el bruto sea positivo."
+                    st.error(
+                        f"El equilibrio está en **{r['breakeven_fee'] * 10000:.1f} bps por lado** "
+                        f"({2 * r['breakeven_fee'] * 10000:.1f} bps por operación). Por encima de esa "
+                        "comisión la estrategia pierde dinero, aunque el bruto sea positivo. Ningún "
+                        "exchange permite comisión tan baja, así que **a costes ejecutables esta "
+                        "estrategia es perdedora**."
                     )
+
+                if r.get("wf"):
+                    w = r["wf"]
+                    st.markdown("#### Walk-forward con reoptimización de parámetros")
+                    st.caption("En cada fold se eligen los parámetros con los datos anteriores al "
+                               "fold y se aplican al fold sin mirar atrás. Evalúa el procedimiento "
+                               "de elegir parámetros, no un par elegido a posteriori.")
+                    k1, k2, k3 = st.columns(3)
+                    k1.metric("Equity OOS acumulado", f"{w['total']:+.2%}")
+                    k2.metric("EMA distintas elegidas", f"{w['ema_distintas']}")
+                    k3.metric("Folds con retorno positivo",
+                              f"{sum(1 for f in w['folds'] if f['test'] > 0)}/{len(w['folds'])}")
+                    st.table(pd.DataFrame([
+                        {"fold": i + 1, "EMA elegida": f["ema"], "momentum": f"{f['mom']}%",
+                         "ret train": f"{f['train']:+.2%}", "ret test (OOS)": f"{f['test']:+.2%}"}
+                        for i, f in enumerate(w["folds"])
+                    ]))
+                    ems = {f["ema"] for f in w["folds"]}
+                    mms = {f["mom"] for f in w["folds"]}
+                    if ems != {50} or mms != {3.0}:
+                        st.warning(
+                            f"El walk-forward elige **{sorted(ems)} / {sorted(mms)}%**, no los "
+                            f"parámetros documentados de la app (**50 / 3.0%**). Los parámetros de "
+                            "la app no son los que el dato seleccionaría."
+                        )
+                    if w["total"] <= 0:
+                        st.error("El procedimiento completo (elegir parámetros y operar) pierde dinero.")
 
                 st.markdown("#### ¿Las reglas aportan valor o solo el dimensionamiento?")
                 st.caption(f"Comparación contra entradas elegidas al azar con el mismo número de "

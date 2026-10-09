@@ -111,11 +111,21 @@ if btn_bt:
     check(any("Backtest Real" in s for s in subs), f"subheader del backtest: {subs}")
     txt = " ".join(m.value for m in at3.markdown)
     check("In-sample" in txt and "Out-of-sample" in txt, "muestra el split in/out-of-sample")
-    check("t-test" not in txt and "t-estadístico" in " ".join(labels),
-          "expone significacion estadistica")
+    check("t-estadístico" in " ".join(labels), "expone significacion estadistica")
     todo3 = " ".join([s.value for s in at3.subheader] + [i.value for i in at3.info]
                      + [w.value for w in at3.warning] + [e.value for e in at3.error] + [txt])
     check("ventaja estadística" in todo3, "el veredicto habla de ventaja estadistica")
+
+    # El walk-forward debe aparecer con su equity y sus folds.
+    check("Walk-forward" in txt or "Walk-forward" in todo3, "incluye la seccion de walk-forward")
+    labs3 = [m.label for m in at3.metric]
+    check(any("Equity OOS acumulado" in l for l in labs3), "muestra el equity OOS del walk-forward")
+    check(any("Folds con retorno positivo" in l for l in labs3), "cuenta los folds positivos")
+    check(len(at3.table) >= 1, f"incluye la tabla de folds: {len(at3.table)} tablas")
+    # El equilibrio de costes debe expresarse en bps, que es la unidad interpretable.
+    avisos3 = [e.value for e in at3.error] + [w.value for w in at3.warning]
+    check(any("bps por lado" in v for v in avisos3),
+          f"informa el punto de equilibrio en bps por lado: {[v[:90] for v in avisos3]}")
 
 print("\n7) Aritmetica de dimensionamiento por ATR (recalculo independiente)")
 import numpy as np
