@@ -283,16 +283,51 @@ else:
                 st.success(estado_senal)
             else:
                 st.error(estado_senal)
+            st.warning(
+                "🔬 **Esta señal no tiene respaldo estadístico demostrado.** El backtest de estas "
+                "mismas reglas sobre toda la historia del activo no encuentra ventaja: el IC 95% "
+                "del retorno medio incluye el cero y el punto de equilibrio está en ~1.2 bps por "
+                "lado. Pulsa la pestaña *Registro de validación* para reproducirlo."
+            )
             
             etiqueta = "COMPRA (LONG) 🚀" if tipo_op == "LONG" else "VENTA (SHORT) 📉"
-            msg_alert = (f"🚨 *NUEVA SEÑAL SENTINEL V10 PRO*\n\n"
-                         f"• Activo: {crypto}\n"
+            msg_alert = (f"⚠️ *SEÑAL SIN RESPALDO ESTADÍSTICO*\n"
+                         f"Sentinel V10 · {crypto}\n\n"
                          f"• Tipo: {etiqueta}\n"
-                         f"• Precio Entrada: ${precio_actual:,.2f} USD\n"
-                         f"• Tamaño sugerido: {pos_size / precio_actual:.5f} unidades\n"
-                         f"⏱️ Salida Rígida: 24 Horas Estrictas")
+                         f"• Precio: ${precio_actual:,.2f} USD\n"
+                         f"• Tamaño: {pos_size / precio_actual:.5f} unidades\n\n"
+                         f"El backtest de este repositorio NO encuentra ventaja estadística en\n"
+                         f"estas reglas: el IC 95% del retorno medio incluye el cero y el punto\n"
+                         f"de equilibrio está en ~1.2 bps por lado. Esto es una demo técnica,\n"
+                         f"no una recomendación de inversión.\n\n"
+                         f"⏱️ Salida teórica a las 24 h")
             
-            if st.button(f"✈️ Despachar Alerta {tipo_op} a Telegram", key=f"btn_{tipo_op.lower()}"):
+            # El despacho exige leer antes el resultado del backtest. Con el backtest en
+            # rojo, publicar una orden como si fuera accionable sería engañoso.
+            with st.expander("⚠️ Antes de despachar: qué dice el backtest", expanded=False):
+                st.markdown(
+                    "La pestaña **Registro de validación** ejecuta el backtest real de estas "
+                    "reglas sobre toda la historia del activo. El resultado medido es:\n\n"
+                    "- El intervalo de confianza al 95% del retorno medio **incluye el cero**: "
+                    "no se demuestra ventaja estadística en BTC, ETH ni SOL.\n"
+                    "- El punto de equilibrio está en **~1.2 bps por lado** para BTC, por debajo "
+                    "de la comisión de cualquier exchange. ETH y SOL pierden dinero con comisión cero.\n"
+                    "- El walk-forward con reoptimización da **+4.0% en 9 años** en BTC "
+                    "(percentil 93 frente a entradas aleatorias), y elige EMA20/±2%, no los "
+                    "parámetros de esta app.\n\n"
+                    "Pulsa el botón para confirmar que has leído esto."
+                )
+                acepta_riesgo = st.checkbox(
+                    "He leído que estas reglas no tienen ventaja estadística demostrada y "
+                    "quiero despachar igualmente.",
+                    key=f"chk_riesgo_{tipo_op.lower()}",
+                )
+            
+            if not acepta_riesgo:
+                st.button(f"✈️ Despachar Alerta {tipo_op} a Telegram",
+                           key=f"btn_{tipo_op.lower()}", disabled=True)
+                st.caption("Deshabilitado hasta marcar la casilla de lectura anterior.")
+            elif st.button(f"✈️ Despachar Alerta {tipo_op} a Telegram", key=f"btn_send_{tipo_op.lower()}"):
                 if not CLAVE_MAESTRA:
                     st.error("❌ Envío bloqueado: no hay `MAINTENANCE_PASSWORD` configurado.")
                 elif admin_password == "":
@@ -302,7 +337,7 @@ else:
                 else:
                     ok, detalle = despachar_alerta_telegram(msg_alert)
                     if ok:
-                        st.toast(f"✅ Señal {tipo_op} enviada a Telegram.")
+                        st.toast(f"✅ Ficha {tipo_op} enviada a Telegram (sin respaldo estadístico).")
                     else:
                         st.error(f"❌ El despacho falló: {detalle}")
         else:

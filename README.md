@@ -121,14 +121,21 @@ baseline.
 
 ### Limitaciones conocidas, documentadas en la propia app
 
+- **La app no despacha órdenes sin consentimiento explícito.** El botón de Telegram arranca
+  deshabilitado y exige marcar *"He leído que estas reglas no tienen ventaja estadística
+  demostrada"* antes de habilitarse. El mensaje que se publica al canal lleva el encabezado
+  *"SEÑAL SIN RESPALDO ESTADÍSTICO"* y un resumen del backtest, en vez de presentar la orden
+  como accionable. La decisión es del mantenedor: la funcionalidad sigue ahí, pero ya no
+  vende una señal como si fuera una recomendación.
 - **El dimensionamiento no acota la pérdida real.** Está calculado asumiendo que el riesgo se
   materializa a 1 ATR, pero la estrategia no tiene stop loss. Un movimiento adverso mayor
   que 1 ATR dentro de la ventana de 24 h supera con holgura el límite de riesgo mostrado.
 - **La señal se evalúa sobre la vela en curso.** yfinance entrega el último día incompleto,
   así que precio, retorno 3D y señal cambian durante la jornada. El protocolo exige validar a
-  las 23:59 UTC; la app lo advierte con un banner explícito.
-- **El backtest no modela slippage ni profundidad de libro**, solo una comisión plana. Con un
-  edge tan fino, esto es material: el equilibrio está en 3.1 bps por lado para BTC.
+  las 23:59 UTC; la app lo advierte con un banner explícito. (`backtest.py` sí descarta la
+  vela en curso, para que el backtest sí sea reproducible.)
+- **El backtest no modela liquidez en eventos de estrés**, solo spread e impacto en régimen
+  normal. Con un equilibrio de 1.2 bps, ese detalle es material.
 - **Muestra estadística corta.** 9-12 años y ~550 operaciones dan poco poder estadístico:
   el intervalo de confianza del retorno medio es de ±0.3%, mayor que el propio retorno.
 
@@ -205,6 +212,19 @@ realmente importa. La pestaña 3 de la app ejecuta este mismo backtest al vuelo 
 activo que selecciones.
 
 Tiempos orientativos: `--rapido` ~10 s por activo, la versión completa ~2-3 min.
+
+### CI
+
+`.github/workflows/ci.yml` corre en cada push y PR:
+
+1. `backtest.py BTC-USD --rapido` — verifica que el harness sigue ejecutando.
+2. `validate.py BTC-USD` — el contraste contra el baseline naive.
+3. `smoke_test.py` — arranca la app en headless y comprueba que no se ha reintroducido
+   ninguna cifra retirada, que el veredicto del LSTM es coherente con sus propias métricas,
+   que el backtest con walk-forward corre, y que el dispatch a Telegram sigue bloqueado
+   hasta marcar la casilla de lectura previa.
+
+Es el mecanismo que impide que las cifras inventadas vuelvan a colarse sin que nadie se entere.
 
 ### Tests
 

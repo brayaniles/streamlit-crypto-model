@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  honestidad:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias de análisis (sin TensorFlow)
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas yfinance scikit-learn
+
+      - name: Backtest reproducible
+        # Verifica que el harness sigue corriendo y que el resultado no cambia.
+        run: python backtest.py BTC-USD --rapido --simulaciones 200
+
+      - name: Baseline naive del modelo de precio
+        run: python validate.py BTC-USD
+
+      - name: La app arranca y no reintroduce contenido inventado
+        # smoke_test.py cubre: arranque sin secrets, ausencia de las cifras retiradas,
+        # veredicto del LSTM coherente con sus propias métricas, backtest con walk-forward,
+        # y el bloqueo del dispatch tras la casilla de lectura.
+        run: |
+          pip install streamlit plotly tensorflow-cpu
+          python smoke_test.py

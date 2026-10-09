@@ -59,12 +59,38 @@ btn = [b for b in at.button if "LSTM" in b.label]
 check(len(btn) == 1, f"se localiza el boton de entrenamiento: {[b.label for b in at.button]}")
 
 print("\n5b) Estado del modulo Telegram (señal activa detectada)")
-hay_tg = [b.label for b in at.button if "Telegram" in b.label]
+hay_tg = [b for b in at.button if "Telegram" in b.label]
 if hay_tg:
     check(any("TELEGRAM_TOKEN" in i.value for i in at.info),
           f"informa que el envio esta deshabilitado por falta de credencial: {[i.value[:110] for i in at.info]}")
     check(not any("clave correcta" in i.value.lower() for i in at.error),
           "no afirma exito de envio sin credencial")
+
+    # P0: el despacho no debe estar disponible hasta leer el resultado del backtest.
+    btn_tg = [b for b in at.button if "Telegram" in b.label][0]
+    check(btn_tg.disabled, "el boton de despacho arranca DESHABILITADO")
+    chk = [c for c in at.checkbox if "ventaja estad" in c.label.lower()]
+    check(len(chk) == 1, f"existe la casilla de lectura previa: {[c.label for c in at.checkbox]}")
+    chk_warn = [w.value for w in at.warning if "respaldo estad" in w.value]
+    check(len(chk_warn) >= 1, "la señal activa muestra aviso de falta de respaldo")
+    check(any("autoescritura" not in i.value for i in at.info),
+          "sin texto de autorreferencia al usuario")
+
+    # Y tras marcar la casilla, el botón debe habilitarse.
+    if chk:
+        at_t = at
+        [c for c in at_t.checkbox if "ventaja estad" in c.label.lower()][0].set_value(True).run(timeout=300)
+        btn2 = [b for b in at_t.button if "Telegram" in b.label]
+        check(btn2 and not btn2[0].disabled,
+              "al marcar la casilla el boton se habilita")
+        # Pero sin credencial sigue sin poder enviar.
+        if btn2:
+            btn2[0].click().run(timeout=300)
+            errs = [e.value for e in at_t.error]
+            check(any("MAINTENANCE_PASSWORD" in e or "clave maestra" in e for e in errs),
+                  f"sin credencial no despacha: {errs}")
+            check(not any("enviada" in t.value.lower() for t in at_t.toast),
+                  "no afirma exito de envio")
 else:
     print("  (sin señal activa: se omite)")
 
